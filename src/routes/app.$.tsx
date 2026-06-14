@@ -149,6 +149,17 @@ function ModuleRouter() {
     }
   }
 
+  if (slug === "import-bill") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <ImportBillDetailView record={record} />;
+    }
+    if (!action) {
+      return <ImportBillDashboardView />;
+    }
+  }
+
   if (action === "new") {
     return <ModuleForm mod={mod} schema={schema} mode="create" />;
   }
@@ -6015,4 +6026,734 @@ function ImportLCDetailView({ record }: { record: any }) {
     </div>
   );
 }
+
+/* ==================== VIEW IMPORT BILL MODULE ==================== */
+
+function ImportBillDashboardView() {
+  const navigate = useNavigate();
+  const records = list("import-bill");
+  const [query, setQuery] = useState("");
+  const [discrepancyFilter, setDiscrepancyFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const filtered = useMemo(() => {
+    let rows = [...records];
+
+    // Discrepancy filter
+    if (discrepancyFilter !== "all") {
+      rows = rows.filter((r) =>
+        String(r.discrepancyStatus || "").toLowerCase().includes(discrepancyFilter.toLowerCase())
+      );
+    }
+
+    // Status filter
+    if (statusFilter !== "all") {
+      rows = rows.filter((r) =>
+        String(r.status || "").toLowerCase() === statusFilter.toLowerCase()
+      );
+    }
+
+    // Text search
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      rows = rows.filter((r) =>
+        Object.values(r).some((v) => String(v ?? "").toLowerCase().includes(q))
+      );
+    }
+
+    return rows;
+  }, [records, query, discrepancyFilter, statusFilter]);
+
+  // Aggregates
+  const pendingCount = useMemo(() =>
+    records.filter((r) => r.status === "Pending").length,
+    [records]
+  );
+  
+  const totalUSD = useMemo(() =>
+    records.filter((r) => r.currency === "USD").reduce((a, r) => a + Number(r.billAmount || 0), 0),
+    [records]
+  );
+
+  const totalEUR = useMemo(() =>
+    records.filter((r) => r.currency === "EUR").reduce((a, r) => a + Number(r.billAmount || 0), 0),
+    [records]
+  );
+
+  const discrepancyBadgeColor = (s: string) => {
+    if (s?.includes("Clean")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (s?.includes("Minor")) return "bg-amber-50 text-amber-700 border-amber-200";
+    if (s?.includes("Major")) return "bg-rose-50 text-rose-700 border-rose-200";
+    return "bg-muted text-muted-foreground";
+  };
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">View Import Bill</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Trade Finance</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Import Bills</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Monitor, audit, and authorize payments for import documentary bills, track discrepancies, and arrange post-import financing.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => toast.success("Import Bill PDF report exported.")}><FileText className="w-4 h-4" />Export PDF</Button>
+          <Button variant="outline" onClick={() => toast.success("Import Bill Excel report exported.")}><Download className="w-4 h-4" />Export Excel</Button>
+        </div>
+      </div>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Total Import Bills</div>
+          <div className="font-display text-3xl font-bold text-navy mt-2">{records.length}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{filtered.length} matching search</div>
+        </Card>
+        <Card className={`p-5 ${pendingCount > 0 ? "border-amber-300 bg-amber-50/30" : ""}`}>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Pending Acceptance</div>
+          <div className={`font-display text-3xl font-bold mt-2 ${pendingCount > 0 ? "text-amber-600" : "text-navy"}`}>
+            {pendingCount}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Awaiting applicant consent</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">USD Bill Value</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">
+            USD {totalUSD.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Presented under LCs</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">EUR Bill Value</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">
+            EUR {totalEUR.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Presented under LCs</div>
+        </Card>
+      </div>
+
+      {/* Search & Filters */}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="import-bill-search"
+              placeholder="Search Bill No., LC No. or amount…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Select value={discrepancyFilter} onValueChange={setDiscrepancyFilter}>
+            <SelectTrigger className="w-44 text-xs" id="discrepancy-filter">
+              <SelectValue placeholder="Discrepancy Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Discrepancy Types</SelectItem>
+              <SelectItem value="Clean">Clean Bills</SelectItem>
+              <SelectItem value="Minor">Minor Discrepancy</SelectItem>
+              <SelectItem value="Major">Major Discrepancy</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40 text-xs" id="status-filter">
+              <SelectValue placeholder="Payment Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="approved">Approved & Settled</SelectItem>
+              <SelectItem value="pending">Pending Acceptance</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+            </SelectContent>
+          </Select>
+          {(query || discrepancyFilter !== "all" || statusFilter !== "all") && (
+            <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setDiscrepancyFilter("all"); setStatusFilter("all"); }}>
+              <X className="w-3.5 h-3.5" /> Clear
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      {/* Bills Table */}
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Bill Number</TableHead>
+              <TableHead>Linked LC</TableHead>
+              <TableHead className="text-right">Bill Amount</TableHead>
+              <TableHead>Discrepancies</TableHead>
+              <TableHead>Acceptance Date</TableHead>
+              <TableHead>Due Date</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-12">
+                  No Import Bills found matching search criteria.
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtered.map((r) => (
+                <TableRow key={r.id} className="hover:bg-muted/30 cursor-pointer" onClick={() => navigate({ to: "/app/$", params: { _splat: `import-bill/view/${r.id}` } })}>
+                  <TableCell className="font-mono text-sm font-semibold text-navy">
+                    {String(r.billNumber)}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {String(r.lcNumber)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono font-semibold">
+                    {String(r.currency)} {Number(r.billAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={`text-[10px] font-semibold ${discrepancyBadgeColor(String(r.discrepancyStatus))}`}>
+                      {String(r.discrepancyStatus)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{String(r.acceptanceDate || "—")}</TableCell>
+                  <TableCell className="text-xs font-semibold">{String(r.dueDate)}</TableCell>
+                  <TableCell>{statusBadge(String(r.status))}</TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="sm" asChild onClick={(e) => e.stopPropagation()}>
+                      <Link to="/app/$" params={{ _splat: `import-bill/view/${r.id}` }}>
+                        <Eye className="w-3.5 h-3.5" /> View Details
+                      </Link>
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
+
+/* ---- Mock data helpers for Import Bill Detail View ---- */
+
+function getBillSwiftMessages(billNumber: string) {
+  return [
+    {
+      id: "SWB-001", msgType: "MT750", date: "2025-05-22 11:14:00",
+      subject: "Advice of Discrepancy",
+      from: "BKCHCNBJXXX (Bank of China, Shanghai)",
+      to: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      status: "Received", body: "Field 77A: DISCREPANCIES\n1. LATE SHIPMENT BY 2 DAYS\n2. COMMERCIAL INVOICE DOES NOT SHOW HS CODE",
+    },
+    {
+      id: "SWB-002", msgType: "MT754", date: "2025-05-25 15:30:00",
+      subject: "Advice of Payment / Acceptance / Negotiation",
+      from: "BKCHCNBJXXX (Bank of China, Shanghai)",
+      to: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      status: "Received", body: "Field 32B: USD 150000,00\nField 34B: USD 150000,00\nWE HAVE NEGOTIATED DOCUMENTS AND FORWARDED TO YOU ON COLLECTION BASIS.",
+    },
+  ].filter((_, i) => billNumber.includes("55204") ? true : i === 1);
+}
+
+function getBillAdviceMessages(billNumber: string) {
+  return [
+    {
+      id: "ADVB-001",
+      date: "2025-05-23",
+      type: "Lodgement Advice",
+      from: "SJIBL Trade Services Dept",
+      to: "Globex Industries Ltd",
+      summary: "Import documents under Bill Ref: BL-IMP-55204 received from presenter bank. Discrepancies noted. Awaiting your acceptance.",
+      status: "Action Required",
+    },
+    {
+      id: "ADVB-002",
+      date: "2025-06-15",
+      type: "Payment Advice",
+      from: "SJIBL Corporate Banking",
+      to: "Globex Industries Ltd",
+      summary: "We have debited your current account for settlement of Bill BL-IMP-55201. SWIFT payment message MT756 transmitted.",
+      status: "Disbursed",
+    },
+  ].filter((m) => billNumber.includes("55204") ? m.id === "ADVB-001" : m.id === "ADVB-002");
+}
+
+/* ---- ImportBillDetailView ---- */
+
+function ImportBillDetailView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("summary");
+  const [billStatus, setBillStatus] = useState(String(record.status));
+
+  // Find linked LC
+  const linkedLC = useMemo(() => {
+    const lcs = list("import-lc");
+    return lcs.find((lc) => String(lc.lcNumber) === String(record.lcNumber));
+  }, [record.lcNumber]);
+
+  const swiftMessages = useMemo(() => getBillSwiftMessages(String(record.billNumber)), [record.billNumber]);
+  const adviceMessages = useMemo(() => getBillAdviceMessages(String(record.billNumber)), [record.billNumber]);
+
+  const discrepancyBadgeColor = (s: string) => {
+    if (s?.includes("Clean")) return "border-emerald-300 text-emerald-700 bg-emerald-50";
+    if (s?.includes("Minor")) return "border-amber-300 text-amber-700 bg-amber-50";
+    if (s?.includes("Major")) return "border-rose-300 text-rose-700 bg-rose-50";
+    return "";
+  };
+
+  const fieldRow = (label: string, value: string | undefined, mono = false) => (
+    <div className="flex justify-between items-start gap-4 py-2 border-b border-border last:border-0">
+      <span className="text-xs text-muted-foreground shrink-0 min-w-[140px]">{label}</span>
+      <span className={`text-sm font-medium text-right ${mono ? "font-mono" : ""}`}>{value || "—"}</span>
+    </div>
+  );
+
+  const handleAcceptDiscrepancies = () => {
+    setBillStatus("Approved");
+    toast.success("Discrepancies accepted. Payment authorized successfully!");
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Breadcrumb */}
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "import-bill" }} className="hover:text-navy">Import Bills</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.billNumber}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "import-bill" } })}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="text-xs uppercase tracking-widest text-gold font-bold">Import Bill</div>
+              <Badge variant="outline" className={`text-[10px] font-bold ${discrepancyBadgeColor(String(record.discrepancyStatus))}`}>
+                {record.discrepancyStatus}
+              </Badge>
+              {statusBadge(billStatus)}
+            </div>
+            <h1 className="font-display text-2xl font-bold text-navy mt-0.5">{record.billNumber}</h1>
+            <p className="text-xs text-muted-foreground mt-1 font-mono">
+              Linked LC: <Link to="/app/$" params={{ _splat: `import-lc/view/${linkedLC?.id || ""}` }} className="text-gold hover:underline">{record.lcNumber}</Link> · Due Date: {record.dueDate}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" onClick={() => { toast.success("Bill summary downloaded."); }}>
+            <FileText className="w-4 h-4" /> Download Bill Summary
+          </Button>
+        </div>
+      </div>
+
+      {/* Key Metric Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Bill Amount</div>
+          <div className="font-mono font-bold text-lg text-navy mt-1">
+            {record.currency} {Number(record.billAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked LC Number</div>
+          <div className="font-mono font-semibold text-sm mt-1 truncate">{record.lcNumber}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Due Date</div>
+          <div className="font-semibold text-sm mt-1 text-navy">{String(record.dueDate)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Discrepancy Status</div>
+          <div className="font-semibold text-xs mt-1 text-amber-600 truncate">{String(record.discrepancyStatus)}</div>
+        </Card>
+      </div>
+
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <div className="overflow-x-auto">
+          <TabsList className="min-w-max">
+            <TabsTrigger value="summary" id="tab-bill-summary">Bill Summary</TabsTrigger>
+            <TabsTrigger value="lc-details" id="tab-bill-lc">LC Details</TabsTrigger>
+            <TabsTrigger value="discrepancy" id="tab-bill-disc">Discrepancy Details</TabsTrigger>
+            <TabsTrigger value="swift" id="tab-bill-swift">SWIFT Message</TabsTrigger>
+            <TabsTrigger value="advice" id="tab-bill-adv">Advice</TabsTrigger>
+            <TabsTrigger value="investment" id="tab-bill-inv">Investment (Credit)</TabsTrigger>
+          </TabsList>
+        </div>
+
+        {/* ── TAB 1: Bill Summary ── */}
+        <TabsContent value="summary" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Bill Details</h2>
+              {fieldRow("Bill Number", String(record.billNumber), true)}
+              {fieldRow("Linked LC Number", String(record.lcNumber), true)}
+              {fieldRow("Bill Amount", `${record.currency} ${Number(record.billAmount).toLocaleString("en-US", { minimumFractionDigits: 2 })}`, true)}
+              {fieldRow("Lodgement Date", String(record.acceptanceDate ? "2025-05-15" : "2025-05-22"))}
+              {fieldRow("Acceptance Date", String(record.acceptanceDate || "—"))}
+              {fieldRow("Due Date", String(record.dueDate))}
+              {fieldRow("Tenure / Terms", linkedLC ? String(linkedLC.lcType).includes("Sight") ? "Sight / On Presentation" : "Usance (90 Days EOD)" : "Usance (90 Days EOD)")}
+            </Card>
+
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Applicant & Supplier</h2>
+              {fieldRow("Applicant", "Globex Industries Ltd")}
+              {fieldRow("Applicant CIF", "CIF-GBX-10029")}
+              {fieldRow("Debit Account", "0123100001 — Al-Wadeeah Current")}
+              {fieldRow("Supplier / Beneficiary", linkedLC ? String(linkedLC.beneficiaryName) : "Global Goods Ltd")}
+              {fieldRow("Beneficiary Country", linkedLC ? String(linkedLC.beneficiaryAddress || "").split(",").pop()?.trim() || "China" : "China")}
+              {fieldRow("Presenting Bank SWIFT", "BKCHCNBJXXX (Bank of China, Shanghai)")}
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 2: LC Details (General, Shipment, Documents) ── */}
+        <TabsContent value="lc-details" className="mt-4">
+          {linkedLC ? (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* General details */}
+              <Card className="p-6 space-y-1">
+                <h2 className="font-display text-lg font-bold text-navy mb-4">General LC Details</h2>
+                {fieldRow("LC Number", String(linkedLC.lcNumber), true)}
+                {fieldRow("LC Type", String(linkedLC.lcType))}
+                {fieldRow("SWIFT Reference", String(linkedLC.swiftReference || "—"), true)}
+                {fieldRow("Status", String(linkedLC.status))}
+                {fieldRow("Opening Date", String(linkedLC.openingDate))}
+                {fieldRow("Expiry Date", String(linkedLC.expiryDate))}
+                {fieldRow("LC Amount", `${linkedLC.currency} ${Number(linkedLC.lcAmount).toLocaleString()}`, true)}
+              </Card>
+
+              {/* Shipment details */}
+              <Card className="p-6 space-y-3">
+                <h2 className="font-display text-lg font-bold text-navy mb-2">Shipment details</h2>
+                {fieldRow("Latest Shipment Date", String(linkedLC.shipmentDate || "—"))}
+                {fieldRow("Port of Loading", "Shanghai / Ningbo")}
+                {fieldRow("Port of Discharge", "Chittagong Port, Bangladesh")}
+                {fieldRow("Incoterms", "CIF Chittagong")}
+                <div className="pt-2">
+                  <span className="text-xs text-muted-foreground block mb-1">Description of Goods</span>
+                  <div className="p-3 bg-muted/40 rounded-md text-sm">{String(linkedLC.goodsDescription || "—")}</div>
+                </div>
+              </Card>
+
+              {/* Documents Required */}
+              <Card className="p-6 lg:col-span-2 space-y-3">
+                <h2 className="font-display text-lg font-bold text-navy mb-2">Documents Required Under LC</h2>
+                <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                  {[
+                    "Signed Commercial Invoice (3 originals)",
+                    "Full Set of Clean On-Board Bill of Lading",
+                    "Packing List (3 copies)",
+                    "Certificate of Origin (Country of Origin: China)",
+                    "Insurance Certificate (all risks, CIF + 10%)",
+                    "Pre-shipment Inspection Certificate",
+                  ].map((doc, idx) => (
+                    <li key={idx} className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+                      <span>{doc}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            </div>
+          ) : (
+            <Card className="p-8 text-center text-muted-foreground">
+              <Info className="w-12 h-12 mx-auto text-muted-foreground opacity-50 mb-3" />
+              <p className="text-sm">Corresponding LC record ({record.lcNumber}) was not found in the local database.</p>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ── TAB 3: Discrepancy Details ── */}
+        <TabsContent value="discrepancy" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card className="p-6 lg:col-span-2 space-y-4">
+              <h2 className="font-display text-lg font-bold text-navy">Document Discrepancy Log</h2>
+              
+              <div className={`p-4 rounded-md border flex items-start gap-3 ${
+                String(record.discrepancyStatus).includes("Clean")
+                  ? "bg-emerald-50/50 border-emerald-200 text-emerald-800"
+                  : "bg-amber-50/50 border-amber-200 text-amber-800"
+              }`}>
+                <Info className="w-5 h-5 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-sm">Discrepancy Status: {record.discrepancyStatus}</div>
+                  <p className="text-xs mt-1 text-muted-foreground leading-relaxed">
+                    {String(record.discrepancyStatus).includes("Clean")
+                      ? "Documents are clean and comply fully with the terms and conditions of the LC. Straight-through settlement authorized."
+                      : "Presenting bank forwarded documents containing discrepancies. Payment cannot be released until discrepancies are formally accepted by the applicant."}
+                  </p>
+                </div>
+              </div>
+
+              {!String(record.discrepancyStatus).includes("Clean") && (
+                <div className="space-y-3">
+                  <h3 className="font-semibold text-sm text-navy">Reported Discrepancies:</h3>
+                  <div className="bg-muted/40 p-4 rounded-md font-mono text-xs leading-relaxed space-y-2">
+                    <p>1. LATE SHIPMENT: Goods shipped on 2025-05-12, exceeding the latest shipment limit of 2025-05-10 by 2 days.</p>
+                    <p>2. DESCRIPTION MISMATCH: Invoice lists "Additives Compound G-2" instead of "Chemical grade additives and solvents".</p>
+                    <p>3. INVOICE HS CODE: Commercial invoice omits the required 8-digit HS Code reference.</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Action consent box */}
+              {billStatus === "Pending" && !String(record.discrepancyStatus).includes("Clean") && (
+                <Card className="p-4 border border-gold/30 bg-gold/[0.02] space-y-3">
+                  <h3 className="font-display text-sm font-bold text-navy">Corporate Authorization & Waiver</h3>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    As the applicant, you must authorize a waiver of these discrepancies in order to release payment/acceptance to the presenting bank. By clicking accept, you authorize SJIBL to credit the negotiating bank.
+                  </p>
+                  <div className="flex gap-2 pt-1">
+                    <Button size="sm" className="bg-gold text-gold-foreground hover:bg-gold/90 gap-1.5" onClick={handleAcceptDiscrepancies}>
+                      <Check className="w-3.5 h-3.5" /> Accept Discrepancy & Accept Bill
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => { setBillStatus("Rejected"); toast.error("Bill rejected. Documents returned on collection basis."); }}>
+                      Reject & Return Documents
+                    </Button>
+                  </div>
+                </Card>
+              )}
+            </Card>
+
+            <Card className="p-6 space-y-4">
+              <h2 className="font-display text-sm font-bold text-navy">Regulatory Audit</h2>
+              <div className="space-y-3 text-xs">
+                <div>
+                  <span className="text-muted-foreground block">UCP 600 Compliance</span>
+                  <span className="font-semibold text-foreground">Article 16 (Discrepant Documents & Waiver)</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block">Auditor Decision window</span>
+                  <span className="font-semibold text-foreground">5 Banking Days from lodgement</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block">Lodgement Reference</span>
+                  <span className="font-semibold font-mono text-foreground">LOD-IMP-55204</span>
+                </div>
+                <div className="border-t pt-3 mt-3">
+                  <span className="text-muted-foreground leading-relaxed block text-[10px]">
+                    <strong>Note:</strong> Under Shariah compliance, payments on discrepant documents can proceed only once the buyer waives their objection and agrees to purchase the goods as delivered.
+                  </span>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 4: SWIFT Message ── */}
+        <TabsContent value="swift" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">Linked SWIFT Messages</h2>
+              <Badge variant="outline">{swiftMessages.length} Messages</Badge>
+            </div>
+            <div className="divide-y divide-border">
+              {swiftMessages.map((msg) => (
+                <div key={msg.id} className="p-5 space-y-3">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge className={`text-[10px] font-bold px-2 py-0.5 ${
+                        msg.msgType === "MT750" ? "bg-rose-100 text-rose-700 border border-rose-300" :
+                        "bg-blue-100 text-blue-700 border border-blue-300"
+                      }`}>
+                        {msg.msgType}
+                      </Badge>
+                      <span className="font-semibold text-sm">{msg.subject}</span>
+                      <Badge variant="outline" className="text-[10px] text-success border-success">
+                        {msg.status}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono">{msg.date}</div>
+                  </div>
+                  <div className="text-xs space-y-1 text-muted-foreground">
+                    <div><span className="font-semibold text-foreground">From:</span> {msg.from}</div>
+                    <div><span className="font-semibold text-foreground">To:</span> {msg.to}</div>
+                  </div>
+                  <div className="bg-muted/40 rounded-md p-3 font-mono text-xs text-muted-foreground whitespace-pre-line leading-relaxed">
+                    {msg.body}
+                  </div>
+                  <div className="flex justify-end pt-1">
+                    <Button variant="ghost" size="sm" className="text-xs gap-1.5" onClick={() => toast.success(`SWIFT message ${msg.msgType} downloaded.`)}>
+                      <Download className="w-3.5 h-3.5" /> Download SWIFT Body
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* ── TAB 5: Advice ── */}
+        <TabsContent value="advice" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">Trade Services Advice Letters</h2>
+              <Badge variant="outline">{adviceMessages.length} Advices</Badge>
+            </div>
+            {adviceMessages.length === 0 ? (
+              <div className="p-10 text-center text-sm text-muted-foreground">No advise documents generated for this bill.</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {adviceMessages.map((adv) => (
+                  <div key={adv.id} className="p-5 space-y-3">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-[10px] bg-muted/50">{adv.type}</Badge>
+                          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">{adv.status}</Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1.5">Dated: {adv.date}</div>
+                      </div>
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => toast.success(`${adv.type} letter downloaded.`)}>
+                        <FileText className="w-3.5 h-3.5" /> Download PDF
+                      </Button>
+                    </div>
+                    <div className="text-xs space-y-1 text-muted-foreground">
+                      <div><span className="font-semibold text-foreground">Sender:</span> {adv.from}</div>
+                      <div><span className="font-semibold text-foreground">Recipient:</span> {adv.to}</div>
+                    </div>
+                    <p className="text-sm bg-muted/40 rounded-md p-3 leading-relaxed text-foreground">{adv.summary}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+
+        {/* ── TAB 6: Investment (Finance / Credit) ── */}
+        <TabsContent value="investment" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card className="p-6 lg:col-span-2 space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <h2 className="font-display text-lg font-bold text-navy">Post-Import Credit & Financing</h2>
+                <Badge className="bg-navy text-gold font-bold">Bai-Murabaha Mode</Badge>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                  <div className="text-xs text-muted-foreground">Finance Instrument</div>
+                  <div className="font-semibold text-sm">MPI (Murabaha Post-Import) / LTR Equivalent</div>
+                </div>
+                <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                  <div className="text-xs text-muted-foreground">Linked Credit Facility</div>
+                  <div className="font-semibold text-sm">FAC-MUR-8839 (Globex Raw Material Limit)</div>
+                </div>
+                <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                  <div className="text-xs text-muted-foreground">Financed Amount</div>
+                  <div className="font-mono font-bold text-navy text-base">
+                    {record.currency} {Number(record.billAmount * 0.9).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">90% of Bill Value (10% paid via Cash Margin)</div>
+                </div>
+                <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                  <div className="text-xs text-muted-foreground">Markup / profit rate</div>
+                  <div className="font-semibold text-sm">9.50% per annum (Shariah Fixed Cost)</div>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <h3 className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">Repayment Schedule Summary</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Installment</TableHead>
+                      <TableHead>Principal Due</TableHead>
+                      <TableHead>Profit Markup</TableHead>
+                      <TableHead>Due Date</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell className="font-medium text-xs">Installment #1 (30d)</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {record.currency} {Number(record.billAmount * 0.3).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {record.currency} {Number(record.billAmount * 0.9 * 0.095 * 30 / 365).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {new Date(new Date(String(record.dueDate)).getTime() + 30 * 86400000).toISOString().slice(0, 10)}
+                      </TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px] text-muted-foreground">Scheduled</Badge></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="font-medium text-xs">Installment #2 (60d)</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {record.currency} {Number(record.billAmount * 0.3).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {record.currency} {Number(record.billAmount * 0.9 * 0.095 * 60 / 365).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {new Date(new Date(String(record.dueDate)).getTime() + 60 * 86400000).toISOString().slice(0, 10)}
+                      </TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px] text-muted-foreground">Scheduled</Badge></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="font-medium text-xs">Installment #3 (90d)</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {record.currency} {Number(record.billAmount * 0.3).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {record.currency} {Number(record.billAmount * 0.9 * 0.095 * 90 / 365).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {new Date(new Date(String(record.dueDate)).getTime() + 90 * 86400000).toISOString().slice(0, 10)}
+                      </TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px] text-muted-foreground">Scheduled</Badge></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            </Card>
+
+            <Card className="p-6 space-y-4">
+              <h2 className="font-display text-sm font-bold text-navy">Credit Facilities Ledger</h2>
+              <div className="space-y-4 text-xs">
+                <div>
+                  <span className="text-muted-foreground block mb-0.5">Approved MPI Limit</span>
+                  <div className="font-mono font-bold text-sm text-navy">BDT 150,000,000</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block mb-0.5">Available Limit</span>
+                  <div className="font-mono font-bold text-sm text-success">BDT 64,600,000</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block mb-0.5">Financing Tenure</span>
+                  <span className="font-semibold text-foreground">90 Days Usance</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block mb-0.5">Liquidation mode</span>
+                  <span className="font-semibold text-foreground">Automated debit on maturity</span>
+                </div>
+                
+                <div className="border-t pt-4">
+                  <Button className="w-full bg-gold text-gold-foreground hover:bg-gold/90 gap-1.5" onClick={() => toast.success("Refinancing request submitted to checker.")}>
+                    <Coins className="w-3.5 h-3.5" /> Convert to Post-Import Loan
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
 
