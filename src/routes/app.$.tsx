@@ -1,0 +1,3688 @@
+import { createFileRoute, Link, notFound, useParams, useNavigate } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { getModule, MODULES } from "@/lib/modules";
+import { getSchema } from "@/lib/moduleSchema";
+import { list, get } from "@/lib/moduleStore";
+import { ModuleForm } from "@/components/module/ModuleForm";
+import { ModuleDetail } from "@/components/module/ModuleDetail";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import {
+  Download, Filter, Plus, FileText, Sparkles, ChevronRight, Eye, Pencil,
+  ArrowLeft, ArrowDownLeft, ArrowUpRight, CheckCircle2, Info, Coins, Wallet, DollarSign, Calendar, Search, FileSpreadsheet,
+  Upload, Check, X, Send, Clock, RefreshCw, Building2, Smartphone, ArrowRightLeft, History, AlarmClock
+} from "lucide-react";
+import { getTransactionsForAccount, type Transaction } from "@/lib/accounts";
+import { getInvestmentTransactions, type InvestmentTransaction } from "@/lib/investments";
+import { getTDTransactions, getProfitSchedule, type TDTransaction } from "@/lib/termDeposits";
+import { getFundTransferHistory, type FundTransferRecord, OWN_ACCOUNTS, BANGLADESH_BANKS, TRANSFER_PURPOSES } from "@/lib/fundTransfers";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { toast } from "sonner";
+import { getSession } from "@/lib/session";
+
+export const Route = createFileRoute("/app/$")({
+  component: ModuleRouter,
+  notFoundComponent: () => (
+    <Card className="p-8 text-center">
+      <h2 className="font-display text-xl">Module not found</h2>
+      <p className="text-sm text-muted-foreground mt-2">The page you requested doesn't exist.</p>
+      <Button asChild className="mt-4"><Link to="/app">Back to dashboard</Link></Button>
+    </Card>
+  ),
+  loader: ({ params }) => {
+    const slug = (params._splat || "").split("/")[0];
+    if (!getModule(slug)) throw notFound();
+    return null;
+  },
+});
+
+function ModuleRouter() {
+  const params = useParams({ from: "/app/$" });
+  const segments = (params._splat || "").split("/").filter(Boolean);
+  const [slug, action, id] = segments;
+  const mod = getModule(slug)!;
+  const schema = getSchema(slug);
+
+  if (slug === "approval") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <ApprovalDetailView record={record} />;
+    }
+    if (!action) {
+      return <ApprovalDashboardView />;
+    }
+  }
+
+  if (slug === "term-deposit") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <TermDepositStatementView record={record} />;
+    }
+    if (!action) {
+      return <TermDepositDashboardView />;
+    }
+  }
+
+  if (slug === "fund-transfer") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <FundTransferDetailView record={record} />;
+    }
+    if (action === "new") {
+      const subType = id || "own";
+      return <FundTransferFormView transferType={subType} />;
+    }
+    if (!action) {
+      return <FundTransferDashboardView />;
+    }
+  }
+
+  if (slug === "accounts") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <AccountStatementView record={record} />;
+    }
+    if (!action) {
+      return <AccountDashboardView />;
+    }
+  }
+
+  if (slug === "investment") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <InvestmentFacilityView record={record} />;
+    }
+    if (!action) {
+      return <InvestmentDashboardView />;
+    }
+  }
+
+  if (action === "new") {
+    return <ModuleForm mod={mod} schema={schema} mode="create" />;
+  }
+  if (action === "view" && id) {
+    const record = get(slug, id);
+    if (!record) return <RecordMissing slug={slug} />;
+    return <ModuleDetail mod={mod} schema={schema} record={record} />;
+  }
+  if (action === "edit" && id) {
+    const record = get(slug, id);
+    if (!record) return <RecordMissing slug={slug} />;
+    return <ModuleForm mod={mod} schema={schema} mode="edit" recordId={id} initial={record} />;
+  }
+  return <ModuleListPage />;
+}
+
+function RecordMissing({ slug }: { slug: string }) {
+  return (
+    <Card className="p-8 text-center">
+      <h2 className="font-display text-xl">Record not found</h2>
+      <p className="text-sm text-muted-foreground mt-2">It may have been deleted or moved.</p>
+      <Button asChild className="mt-4"><Link to="/app/$" params={{ _splat: slug }}>Back to list</Link></Button>
+    </Card>
+  );
+}
+
+function statusBadge(s: string) {
+  const map: Record<string, string> = {
+    Approved: "border-success text-success",
+    Pending: "border-warning text-warning",
+    Rejected: "border-destructive text-destructive",
+    Draft: "border-muted-foreground text-muted-foreground",
+  };
+  return <Badge variant="outline" className={map[s] || ""}>{s}</Badge>;
+}
+
+function ModuleListPage() {
+  const params = useParams({ from: "/app/$" });
+  const slug = (params._splat || "").split("/")[0];
+  const mod = getModule(slug)!;
+  const schema = getSchema(slug);
+  const Icon = mod.icon;
+  const [query, setQuery] = useState("");
+
+  const rows = useMemo(() => {
+    const all = list(slug);
+    if (!query.trim()) return all;
+    const q = query.toLowerCase();
+    return all.filter((r) =>
+      Object.values(r).some((v) => String(v ?? "").toLowerCase().includes(q)),
+    );
+  }, [slug, query]);
+
+  const related = MODULES.filter((m) => m.group === mod.group && m.slug !== mod.slug).slice(0, 4);
+
+  const formatCell = (v: unknown, colName: string) => {
+    if (v === undefined || v === null || v === "") return "—";
+    const field = schema.fields.find((f) => f.name === colName);
+    if (field?.type === "amount") {
+      const n = Number(v);
+      if (!isNaN(n)) return n.toLocaleString("en-US", { minimumFractionDigits: 2 });
+    }
+    return String(v);
+  };
+
+  const totalAmount = rows.reduce((acc, r) => {
+    const amt = Number(r.amount ?? r.totalAmount ?? 0);
+    return isNaN(amt) ? acc : acc + amt;
+  }, 0);
+  const pending = rows.filter((r) => r.status === "Pending").length;
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground">{mod.title}</span>
+      </nav>
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-lg navy-gradient text-navy-foreground grid place-items-center shrink-0">
+            <Icon className="w-6 h-6 text-gold" />
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-gold">{mod.group}</div>
+            <h1 className="font-display text-3xl mt-0.5">{mod.title}</h1>
+            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">{mod.description}</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline"><Download className="w-4 h-4" />Export</Button>
+          {schema.canCreate && (
+            <Button asChild className="bg-navy text-navy-foreground hover:bg-navy/90">
+              <Link to="/app/$" params={{ _splat: `${slug}/new` }}>
+                <Plus className="w-4 h-4" />New {schema.singular}
+              </Link>
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Stat label="Total records" value={rows.length.toLocaleString()} />
+        <Stat label="Pending action" value={pending.toString()} accent={pending > 0 ? "warning" : undefined} />
+        <Stat label="Total value" value={totalAmount > 0 ? `BDT ${totalAmount.toLocaleString()}` : "—"} />
+        <Stat label="Last updated" value={rows[0]?.updatedAt ? new Date(String(rows[0].updatedAt)).toLocaleDateString() : "—"} />
+      </div>
+
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Input
+            placeholder={`Search in ${mod.short}…`}
+            className="max-w-sm"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <Button variant="outline" size="sm"><Filter className="w-4 h-4" />Filters</Button>
+          <div className="ml-auto flex gap-2">
+            <Button variant="outline" size="sm"><FileText className="w-4 h-4" />PDF</Button>
+            <Button variant="outline" size="sm"><Download className="w-4 h-4" />Excel</Button>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>ID</TableHead>
+              {schema.listColumns.map((c) => (
+                <TableHead key={c.name} className={c.align === "right" ? "text-right" : ""}>
+                  {c.label}
+                </TableHead>
+              ))}
+              <TableHead className="text-right">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={schema.listColumns.length + 2} className="text-center text-sm text-muted-foreground py-10">
+                  No records found.{" "}
+                  {schema.canCreate && (
+                    <Link to="/app/$" params={{ _splat: `${slug}/new` }} className="text-gold hover:underline">
+                      Create the first {schema.singular.toLowerCase()}
+                    </Link>
+                  )}
+                </TableCell>
+              </TableRow>
+            ) : rows.map((r) => (
+              <TableRow key={r.id}>
+                <TableCell className="font-mono text-xs">
+                  <Link to="/app/$" params={{ _splat: `${slug}/view/${r.id}` }} className="hover:text-gold">
+                    {r.id}
+                  </Link>
+                </TableCell>
+                {schema.listColumns.map((c) => (
+                  <TableCell key={c.name} className={`text-sm ${c.align === "right" ? "text-right font-mono" : ""}`}>
+                    {c.name === "status"
+                      ? statusBadge(String(r[c.name] ?? ""))
+                      : formatCell(r[c.name], c.name)}
+                  </TableCell>
+                ))}
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="sm" asChild>
+                      <Link to="/app/$" params={{ _splat: `${slug}/view/${r.id}` }}>
+                        <Eye className="w-3.5 h-3.5" /> View
+                      </Link>
+                    </Button>
+                    {schema.canCreate && (
+                      <Button variant="ghost" size="sm" asChild>
+                        <Link to="/app/$" params={{ _splat: `${slug}/edit/${r.id}` }}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+
+      {!schema.canCreate && (
+        <Card className="p-5 bg-gold/[0.06] border-gold/30">
+          <div className="flex items-start gap-3">
+            <Sparkles className="w-5 h-5 text-gold shrink-0 mt-0.5" />
+            <div>
+              <div className="font-medium">Read-only module</div>
+              <p className="text-sm text-muted-foreground mt-1">
+                {mod.title} entries are sourced from the core banking system. Records can be viewed
+                and exported here, but cannot be created from the portal.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {related.length > 0 && (
+        <div>
+          <h3 className="font-display text-lg mb-3">Related modules</h3>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {related.map((r) => (
+              <Link key={r.slug} to="/app/$" params={{ _splat: r.slug }}
+                className="p-4 rounded-md border border-border hover:border-gold hover:bg-muted/40 transition-colors flex items-start gap-3">
+                <r.icon className="w-4 h-4 text-navy shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{r.short}</div>
+                  <div className="text-xs text-muted-foreground line-clamp-2">{r.description}</div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: string; accent?: "warning" }) {
+  return (
+    <Card className="p-5">
+      <div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`font-display text-2xl mt-2 ${accent === "warning" ? "text-warning" : ""}`}>{value}</div>
+    </Card>
+  );
+}
+
+/* ------------------- Enhanced Accounts & Statements Views ------------------- */
+
+function AccountDashboardView() {
+  const accounts = list("accounts");
+  const [tab, setTab] = useState("all");
+
+  const filtered = useMemo(() => {
+    if (tab === "all") return accounts;
+    if (tab === "current") return accounts.filter(a => a.accountType === "Al-Wadeeah Current");
+    if (tab === "savings") return accounts.filter(a => a.accountType !== "Al-Wadeeah Current");
+    return accounts;
+  }, [accounts, tab]);
+
+  // Aggregate totals
+  const totalBDT = useMemo(() => {
+    return accounts
+      .filter(a => a.currency === "BDT")
+      .reduce((acc, a) => acc + Number(a.balance || 0), 0);
+  }, [accounts]);
+
+  const totalUSD = useMemo(() => {
+    return accounts
+      .filter(a => a.currency === "USD")
+      .reduce((acc, a) => acc + Number(a.balance || 0), 0);
+  }, [accounts]);
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">Accounts & Investments</span>
+      </nav>
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Shahjalal Islami Bank PLC</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Account Management & Statements</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Real-time balance inquiry, transaction history ledger, and SWIFT-compliant bank statement downloads.
+          </p>
+        </div>
+      </div>
+
+      {/* Aggregate Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <Card className="p-5 flex items-start gap-4">
+          <div className="w-10 h-10 rounded-lg bg-navy/10 text-navy grid place-items-center shrink-0">
+            <Wallet className="w-5 h-5 text-gold" />
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Total Local Currency Bal</div>
+            <div className="font-display text-2xl mt-2 text-navy font-bold">
+              BDT {totalBDT.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-1">Across BDT Accounts</div>
+          </div>
+        </Card>
+
+        <Card className="p-5 flex items-start gap-4">
+          <div className="w-10 h-10 rounded-lg bg-navy/10 text-navy grid place-items-center shrink-0">
+            <DollarSign className="w-5 h-5 text-gold" />
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Total FCY Balance</div>
+            <div className="font-display text-2xl mt-2 text-navy font-bold">
+              USD {totalUSD.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-1">Across OBU Accounts</div>
+          </div>
+        </Card>
+
+        <Card className="p-5 flex items-start gap-4 col-span-1 sm:col-span-2 lg:col-span-1 bg-gold/[0.04] border-gold/30">
+          <div className="w-10 h-10 rounded-lg bg-gold/10 text-gold grid place-items-center shrink-0">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Shariah-Compliance</div>
+            <div className="font-display text-lg mt-2 text-foreground font-semibold">Al-Wadeeah & Mudaraba</div>
+            <p className="text-[11px] text-muted-foreground mt-1 leading-normal">
+              Accounts strictly adhere to Islamic profit-sharing ratios and non-interest pooling.
+            </p>
+          </div>
+        </Card>
+      </div>
+
+      {/* Account Table & Filters */}
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-card p-3 rounded-lg border border-border">
+          <TabsList>
+            <TabsTrigger value="all">All Accounts ({accounts.length})</TabsTrigger>
+            <TabsTrigger value="current">Current Accounts</TabsTrigger>
+            <TabsTrigger value="savings">Savings & SND</TabsTrigger>
+          </TabsList>
+
+          <div className="flex gap-2">
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <FileText className="w-4 h-4 mr-2" /> Profit Rates
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Mudaraba Weightages & Profit Rates</DialogTitle>
+                  <DialogDescription>
+                    Shahjalal Islami Bank PLC declared provisional profit sharing ratios for the current month.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 py-3 text-sm">
+                  <div className="flex justify-between border-b border-border pb-2">
+                    <span className="font-medium">Account Type</span>
+                    <span className="font-semibold text-gold">Weightage / Ratio</span>
+                  </div>
+                  <div className="flex justify-between text-xs py-1">
+                    <span>Mudaraba Savings (Corporate)</span>
+                    <span>45% (Customer) : 55% (Bank)</span>
+                  </div>
+                  <div className="flex justify-between text-xs py-1">
+                    <span>Special Notice Deposit (SND)</span>
+                    <span>30% (Customer) : 70% (Bank)</span>
+                  </div>
+                  <div className="flex justify-between text-xs py-1">
+                    <span>Mudaraba Term Deposit (1 Month)</span>
+                    <span>1.10 weightage</span>
+                  </div>
+                  <div className="flex justify-between text-xs py-1">
+                    <span>Mudaraba Term Deposit (12 Month)</span>
+                    <span>1.35 weightage</span>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" className="w-full" asChild>
+                    <a href="#" onClick={(e) => { e.preventDefault(); toast.success("Weightages brochure downloaded."); }}>
+                      <Download className="w-4 h-4 mr-2" /> Download Brochure (PDF)
+                    </a>
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filtered.map(acc => {
+            return (
+              <Card key={acc.id} className="p-6 flex flex-col justify-between hover:border-gold/50 transition-colors border border-border">
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">{acc.accountType}</span>
+                      <h2 className="font-display font-bold text-lg text-navy line-clamp-1 mt-0.5">{acc.accountName}</h2>
+                    </div>
+                    <Badge variant="outline" className={acc.currency === "BDT" ? "bg-navy/5 text-navy border-navy/20" : "bg-gold/5 text-gold border-gold/20"}>
+                      {acc.currency}
+                    </Badge>
+                  </div>
+
+                  <div>
+                    <span className="text-xs text-muted-foreground font-mono">A/C: {acc.accountNo}</span>
+                    <div className="mt-2 text-2xl font-display font-bold text-foreground">
+                      {acc.currency} {Number(acc.balance).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1 flex justify-between">
+                      <span>Available:</span>
+                      <span className="font-semibold text-foreground">{acc.currency} {Number(acc.availableBalance).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 pt-4 border-t border-border flex justify-between items-center">
+                  <div className="text-[10px] text-muted-foreground">
+                    {acc.branchName}
+                  </div>
+                  <Button size="sm" variant="ghost" className="text-gold hover:text-gold/80 hover:bg-gold/5 text-xs gap-1.5 p-0 h-auto" asChild>
+                    <Link to="/app/$" params={{ _splat: `accounts/view/${acc.id}` }}>
+                      View Statement <ChevronRight className="w-4 h-4" />
+                    </Link>
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      </Tabs>
+    </div>
+  );
+}
+
+function AccountStatementView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [dateRange, setDateRange] = useState("all");
+
+  const [showCertDialog, setShowCertDialog] = useState(false);
+  const [certPurpose, setCertPurpose] = useState("");
+  const [certBranch, setCertBranch] = useState("");
+
+  const [showDownloadDialog, setShowDownloadDialog] = useState(false);
+  const [downloadFormat, setDownloadFormat] = useState("PDF");
+  const [downloadPeriod, setDownloadPeriod] = useState("30days");
+
+  const allTransactions = useMemo(() => {
+    return getTransactionsForAccount(record.accountNo);
+  }, [record.accountNo]);
+
+  // Filtering transactions
+  const transactions = useMemo(() => {
+    let list = [...allTransactions];
+
+    // Filter by type
+    if (typeFilter === "credit") {
+      list = list.filter(t => t.type === "Credit");
+    } else if (typeFilter === "debit") {
+      list = list.filter(t => t.type === "Debit");
+    }
+
+    // Filter by date
+    if (dateRange === "7days") {
+      const boundary = new Date("2026-06-08T00:00:00Z");
+      list = list.filter(t => new Date(t.date) >= boundary);
+    } else if (dateRange === "30days") {
+      const boundary = new Date("2026-05-16T00:00:00Z");
+      list = list.filter(t => new Date(t.date) >= boundary);
+    }
+
+    // Filter by search query
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(t => 
+        t.description.toLowerCase().includes(q) ||
+        t.id.toLowerCase().includes(q) ||
+        t.reference.toLowerCase().includes(q) ||
+        t.category.toLowerCase().includes(q)
+      );
+    }
+
+    return list;
+  }, [allTransactions, query, typeFilter, dateRange]);
+
+  // Aggregated statements stats
+  const stats = useMemo(() => {
+    let inflow = 0;
+    let outflow = 0;
+    transactions.forEach(t => {
+      if (t.type === "Credit") inflow += t.amount;
+      else outflow += t.amount;
+    });
+    return {
+      inflow,
+      outflow,
+      net: inflow - outflow
+    };
+  }, [transactions]);
+
+  function handleRequestCertificate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!certPurpose || !certBranch) {
+      toast.error("Please fill in all details");
+      return;
+    }
+    // Simulate Maker-Checker Approval entry addition
+    const session = getSession();
+    const maker = session?.username || "maker";
+    const appRows = JSON.parse(localStorage.getItem(`sjibl.ctb.v2.approval`) || "[]");
+    
+    const newApproval = {
+      id: `TXN-${Math.floor(10000 + Math.random() * 90000)}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "Pending",
+      ref: record.id,
+      moduleTitle: "Accounts & Investments",
+      details: `Request Balance Certificate for A/C ${record.accountNo} (Purpose: ${certPurpose}, Delivery: ${certBranch})`,
+      maker: maker,
+      risk: "Low",
+      amount: 0,
+      sourceSlug: "accounts",
+      remarks: "Awaiting Checker verification for signature and issuance."
+    };
+    appRows.unshift(newApproval);
+    localStorage.setItem(`sjibl.ctb.v2.approval`, JSON.stringify(appRows));
+
+    toast.success("Balance Certificate request submitted to Approval Queue!");
+    setShowCertDialog(false);
+    setCertPurpose("");
+    setCertBranch("");
+  }
+
+  function handleDownloadStatement() {
+    let filteredTxs = [...allTransactions];
+    if (downloadPeriod === "7days") {
+      const boundary = new Date("2026-06-08T00:00:00Z");
+      filteredTxs = filteredTxs.filter(t => new Date(t.date) >= boundary);
+    } else if (downloadPeriod === "30days") {
+      const boundary = new Date("2026-05-16T00:00:00Z");
+      filteredTxs = filteredTxs.filter(t => new Date(t.date) >= boundary);
+    }
+
+    if (downloadFormat === "CSV") {
+      downloadCSV(record.accountNo, filteredTxs);
+    } else if (downloadFormat === "MT940") {
+      downloadMT940(record.accountNo, filteredTxs);
+    } else {
+      downloadPDF(record.accountNo, record.accountName, record.accountType, record.balance, filteredTxs);
+    }
+
+    toast.success(`Bank Statement downloaded successfully in ${downloadFormat} format!`);
+    setShowDownloadDialog(false);
+  }
+
+  const isMudaraba = record.accountType.includes("Mudaraba") || record.accountType.includes("Deposit") || record.accountType.includes("Notice");
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "accounts" }} className="hover:text-navy">Accounts</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.accountNo}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "accounts" } })}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-gold font-bold">{record.accountType}</div>
+            <h1 className="font-display text-3xl font-bold text-navy mt-0.5">{record.accountName}</h1>
+            <p className="text-xs font-mono text-muted-foreground mt-1">
+              Account No: {record.accountNo} · Branch: {record.branchName}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {/* Download Dialog */}
+          <Dialog open={showDownloadDialog} onOpenChange={setShowDownloadDialog}>
+            <DialogTrigger asChild>
+              <Button className="bg-navy text-navy-foreground hover:bg-navy/90">
+                <Download className="w-4 h-4 mr-2" /> Download Statement
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Generate Bank Statement</DialogTitle>
+                <DialogDescription>
+                  Configure date range and export format. Sourced securely from core ledger.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-3 text-sm">
+                <div className="space-y-2">
+                  <Label htmlFor="period">Statement Period</Label>
+                  <Select value={downloadPeriod} onValueChange={setDownloadPeriod}>
+                    <SelectTrigger id="period">
+                      <SelectValue placeholder="Select Period" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="7days">Last 7 Days (Jun 08 - Present)</SelectItem>
+                      <SelectItem value="30days">Last 30 Days (May 16 - Present)</SelectItem>
+                      <SelectItem value="all">Full History</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="format">File Format</Label>
+                  <Select value={downloadFormat} onValueChange={setDownloadFormat}>
+                    <SelectTrigger id="format">
+                      <SelectValue placeholder="Select Format" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PDF">PDF Ledger Report (.txt)</SelectItem>
+                      <SelectItem value="CSV">Excel CSV Spreadsheet (.csv)</SelectItem>
+                      <SelectItem value="MT940">MT940 SWIFT Statement (.sta)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {downloadFormat === "MT940" && (
+                    <p className="text-[10px] text-muted-foreground bg-muted p-2 rounded leading-relaxed">
+                      MT940 statements follow SWIFT MT940 specifications, matching account, sequence numbers, field :60F, :61, :86, and :62F for ERP reconciliation.
+                    </p>
+                  )}
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowDownloadDialog(false)}>Cancel</Button>
+                <Button onClick={handleDownloadStatement} className="bg-gold text-gold-foreground hover:bg-gold/90">
+                  Generate & Download
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Certificate Dialog */}
+          <Dialog open={showCertDialog} onOpenChange={setShowCertDialog}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <FileText className="w-4 h-4 mr-2" /> Request Balance Certificate
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <form onSubmit={handleRequestCertificate}>
+                <DialogHeader>
+                  <DialogTitle>Request Balance Certificate</DialogTitle>
+                  <DialogDescription>
+                    Submit a request to issue an official balance certificate signed by branch managers.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-3 text-sm">
+                  <div className="space-y-2">
+                    <Label htmlFor="purpose">Purpose of Certificate</Label>
+                    <Select value={certPurpose} onValueChange={setCertPurpose}>
+                      <SelectTrigger id="purpose">
+                        <SelectValue placeholder="Select Purpose" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Audit Verification">Corporate Audit Verification</SelectItem>
+                        <SelectItem value="Visa / Embassy">Embassy / Visa Application</SelectItem>
+                        <SelectItem value="Credit Facilities">Credit Rating / Facilities</SelectItem>
+                        <SelectItem value="General Reference">General Reference</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="branch">Delivery Branch</Label>
+                    <Select value={certBranch} onValueChange={setCertBranch}>
+                      <SelectTrigger id="branch">
+                        <SelectValue placeholder="Select Collection Branch" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Dilkusha Branch">Dilkusha Branch (Dhaka)</SelectItem>
+                        <SelectItem value="Motijheel Branch">Motijheel Corporate Branch</SelectItem>
+                        <SelectItem value="Gulshan Branch">Gulshan Branch</SelectItem>
+                        <SelectItem value="Uttara Branch">Uttara Branch</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setShowCertDialog(false)}>Cancel</Button>
+                  <Button type="submit" className="bg-navy text-navy-foreground hover:bg-navy/90">
+                    Submit Request
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      {/* Account Info and Summary statistics */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          {/* Balance Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            <Card className="p-4 bg-muted/40">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Ledger Balance</span>
+              <div className="text-xl font-bold font-mono mt-1 text-navy">
+                {record.currency} {Number(record.balance).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+              </div>
+            </Card>
+
+            <Card className="p-4 bg-muted/40">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Available Balance</span>
+              <div className="text-xl font-bold font-mono mt-1 text-foreground">
+                {record.currency} {Number(record.availableBalance).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+              </div>
+            </Card>
+
+            <Card className="p-4 bg-muted/40">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Branch & BIC</span>
+              <div className="text-xs font-semibold mt-1 truncate">
+                {record.branchName}
+              </div>
+              <span className="text-[10px] font-mono text-muted-foreground">BIC: {record.swiftCode}</span>
+            </Card>
+          </div>
+
+          {/* Statement details stats */}
+          <Card className="p-5">
+            <h2 className="font-display font-semibold text-sm uppercase tracking-wider text-muted-foreground mb-4">Statement Statistics (Filtered View)</h2>
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="border-r border-border">
+                <span className="text-xs text-muted-foreground">Total Inflows</span>
+                <div className="text-sm sm:text-base md:text-lg font-bold font-mono text-success flex justify-center items-center gap-1 mt-1">
+                  <ArrowDownLeft className="w-4 h-4 shrink-0" />
+                  <span>{record.currency} {stats.inflow.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+
+              <div className="border-r border-border">
+                <span className="text-xs text-muted-foreground">Total Outflows</span>
+                <div className="text-sm sm:text-base md:text-lg font-bold font-mono text-destructive flex justify-center items-center gap-1 mt-1">
+                  <ArrowUpRight className="w-4 h-4 shrink-0" />
+                  <span>{record.currency} {stats.outflow.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+
+              <div>
+                <span className="text-xs text-muted-foreground">Net Ledger Change</span>
+                <div className={`text-sm sm:text-base md:text-lg font-bold font-mono flex justify-center items-center gap-1 mt-1 ${stats.net >= 0 ? "text-navy" : "text-destructive"}`}>
+                  <span>{stats.net >= 0 ? "+" : ""}{record.currency} {stats.net.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Transaction Ledger Table */}
+          <Card className="p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="relative max-w-xs flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search ledger..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+
+              <div className="flex gap-2 flex-wrap text-xs">
+                <Select value={typeFilter} onValueChange={setTypeFilter}>
+                  <SelectTrigger className="h-9 w-28 text-xs">
+                    <SelectValue placeholder="All Txns" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Txns</SelectItem>
+                    <SelectItem value="credit">Credits (In)</SelectItem>
+                    <SelectItem value="debit">Debits (Out)</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Select value={dateRange} onValueChange={setDateRange}>
+                  <SelectTrigger className="h-9 w-32 text-xs">
+                    <SelectValue placeholder="Period" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All History</SelectItem>
+                    <SelectItem value="7days">Last 7 Days</SelectItem>
+                    <SelectItem value="30days">Last 30 Days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="border rounded-md overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Reference ID</TableHead>
+                    <TableHead>Narration / Description</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {transactions.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-10">
+                        No transactions found matching filters.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    transactions.map((t) => (
+                      <TableRow key={t.id}>
+                        <TableCell className="text-xs whitespace-nowrap">{t.date}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">
+                          {t.id}
+                        </TableCell>
+                        <TableCell className="text-sm font-medium">{t.description}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] uppercase font-semibold">
+                            {t.category}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className={`text-right font-mono font-semibold whitespace-nowrap ${t.type === "Credit" ? "text-success" : "text-destructive"}`}>
+                          {t.type === "Credit" ? "+" : "-"}{Number(t.amount).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs whitespace-nowrap">
+                          {Number(t.balanceAfter).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </div>
+
+        {/* Sidebar Info */}
+        <div className="space-y-6">
+          {/* Account Profile Card */}
+          <Card className="p-5 space-y-4">
+            <h2 className="font-display font-semibold text-lg text-navy">Account Profile</h2>
+            <div className="text-xs space-y-3">
+              <div className="flex justify-between border-b border-border pb-1.5">
+                <span className="text-muted-foreground">Routing Number:</span>
+                <span className="font-semibold">{record.routingNumber}</span>
+              </div>
+              <div className="flex justify-between border-b border-border pb-1.5">
+                <span className="text-muted-foreground">SWIFT BIC Code:</span>
+                <span className="font-semibold">{record.swiftCode}</span>
+              </div>
+              <div className="flex justify-between border-b border-border pb-1.5 font-mono">
+                <span className="text-muted-foreground font-sans">IBAN Number:</span>
+                <span className="font-semibold truncate max-w-[150px]" title={`BD99SJIB000${record.accountNo}`}>BD99SJIB000{record.accountNo}</span>
+              </div>
+              <div className="flex justify-between border-b border-border pb-1.5">
+                <span className="text-muted-foreground">Account Status:</span>
+                <span className="font-semibold text-success flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Active
+                </span>
+              </div>
+            </div>
+          </Card>
+
+          {/* Shariah compliance / Mudaraba Panel */}
+          {isMudaraba ? (
+            <Card className="p-5 border-gold bg-gold/[0.04] space-y-4">
+              <div className="flex items-center gap-2 text-gold">
+                <Coins className="w-5 h-5 shrink-0" />
+                <h2 className="font-display font-semibold text-lg text-navy">Mudaraba Account Details</h2>
+              </div>
+              <p className="text-xs text-muted-foreground leading-normal">
+                This account operates under the Mudaraba principle, where the customer acts as a capital provider (Sahib-al-Maal) and the bank acts as a manager (Mudarib).
+              </p>
+              <div className="text-xs space-y-3 pt-2">
+                <div className="flex justify-between border-b border-gold/20 pb-1.5">
+                  <span className="text-muted-foreground">Profit sharing ratio:</span>
+                  <span className="font-semibold">45% Customer : 55% Bank</span>
+                </div>
+                <div className="flex justify-between border-b border-gold/20 pb-1.5">
+                  <span className="text-muted-foreground">Declared weightage:</span>
+                  <span className="font-semibold">0.45 weightage</span>
+                </div>
+                <div className="flex justify-between border-b border-gold/20 pb-1.5">
+                  <span className="text-muted-foreground">Distribution frequency:</span>
+                  <span className="font-semibold">Monthly Payout</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Next payout:</span>
+                  <span className="font-semibold text-gold">July 01, 2026</span>
+                </div>
+              </div>
+            </Card>
+          ) : (
+            <Card className="p-5 border-navy/30 bg-navy/[0.02] space-y-4">
+              <div className="flex items-center gap-2 text-navy">
+                <Info className="w-5 h-5 shrink-0 text-gold" />
+                <h2 className="font-display font-semibold text-lg">Al-Wadeeah Current</h2>
+              </div>
+              <p className="text-xs text-muted-foreground leading-normal font-light">
+                This account is based on the Al-Wadeeah contract, acting as a safe custodianship. The bank guarantees the principal balance, and no profit is shared or distributed.
+              </p>
+              <div className="text-xs space-y-3 pt-2">
+                <div className="flex justify-between border-b border-border pb-1.5">
+                  <span className="text-muted-foreground">Principal guarantee:</span>
+                  <span className="font-semibold text-success">100% Guaranteed</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Profit/Interest rate:</span>
+                  <span className="font-semibold">0.00% (Interest-Free)</span>
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Client-Side Statement Download Helpers ----------------- */
+
+function downloadCSV(accountNo: string, txs: Transaction[]) {
+  const headers = "Date,Transaction ID,Description,Category,Type,Amount,Running Balance,Reference\n";
+  const rows = txs.map(t => 
+    `"${t.date}","${t.id}","${t.description.replace(/"/g, '""')}","${t.category}","${t.type}",${t.amount},${t.balanceAfter},"${t.reference}"`
+  ).join("\n");
+  const blob = new Blob([headers + rows], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `statement_${accountNo}_${new Date().toISOString().slice(0,10)}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function downloadMT940(accountNo: string, txs: Transaction[]) {
+  const todayStr = new Date().toISOString().slice(2, 10).replace(/-/g, ""); // YYMMDD
+  const balance = txs[0] ? txs[0].balanceAfter : 0;
+  const initialBalance = txs[txs.length - 1] ? (txs[txs.length - 1].balanceAfter + (txs[txs.length - 1].type === "Debit" ? txs[txs.length - 1].amount : -txs[txs.length - 1].amount)) : 0;
+
+  let mt940 = `:20:START\n:25:${accountNo}\n:28C:00001\n:60F:C${todayStr}BDT${initialBalance.toFixed(2).replace(".", ",")}\n`;
+  
+  txs.forEach((t) => {
+    const txnDate = t.date.slice(2, 10).replace(/-/g, ""); // YYMMDD
+    const entryDate = txnDate.slice(2); // MMDD
+    const typeIndicator = t.type === "Credit" ? "C" : "D";
+    const amtStr = t.amount.toFixed(2).replace(".", ",");
+    mt940 += `:61:${txnDate}${entryDate}${typeIndicator}${amtStr}FTRF${t.reference}//${t.id}\n:86:${t.description.toUpperCase()}\n`;
+  });
+  
+  mt940 += `:62F:C${todayStr}BDT${balance.toFixed(2).replace(".", ",")}\n`;
+
+  const blob = new Blob([mt940], { type: "text/plain;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `MT940_${accountNo}_${todayStr}.sta`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function downloadPDF(accountNo: string, accountName: string, type: string, balance: number, txs: Transaction[]) {
+  let text = `SHAHJALAL ISLAMI BANK PLC\nCORPORATE TRANSACTION BANKING STATEMENT\n`;
+  text += `========================================================================\n`;
+  text += `Account Name: ${accountName}\n`;
+  text += `Account Number: ${accountNo}\n`;
+  text += `Account Type: ${type}\n`;
+  text += `Current Balance: BDT ${balance.toLocaleString()}\n`;
+  text += `Statement Date: ${new Date().toLocaleString()}\n`;
+  text += `========================================================================\n\n`;
+  text += `DATE        TXN ID      TYPE     AMOUNT            BALANCE           NARRATION\n`;
+  text += `------------------------------------------------------------------------\n`;
+  
+  txs.forEach(t => {
+    const amt = (t.type === "Credit" ? "+" : "-") + t.amount.toLocaleString().padStart(12);
+    const bal = t.balanceAfter.toLocaleString().padStart(12);
+    text += `${t.date}  ${t.id.padEnd(10)}  ${t.type.padEnd(6)}  ${amt.padEnd(16)}  ${bal.padEnd(16)}  ${t.description.slice(0, 40)}\n`;
+  });
+  
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `statement_${accountNo}_${new Date().toISOString().slice(0,10)}.txt`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/* ------------------- Enhanced Investments & Facilities Views ------------------- */
+
+function InvestmentDashboardView() {
+  const facilities = list("investment");
+  const [tab, setTab] = useState("all");
+
+  const filtered = useMemo(() => {
+    if (tab === "all") return facilities;
+    if (tab === "murabaha") return facilities.filter(f => f.facilityType === "Bai-Murabaha");
+    if (tab === "hpsm") return facilities.filter(f => f.facilityType.includes("HPSM"));
+    return facilities;
+  }, [facilities, tab]);
+
+  // Aggregate stats
+  const stats = useMemo(() => {
+    let limit = 0;
+    let outstanding = 0;
+    facilities.forEach(f => {
+      limit += Number(f.limitAmount || 0);
+      outstanding += Number(f.outstandingAmount || 0);
+    });
+    return {
+      limit,
+      outstanding,
+      available: limit - outstanding
+    };
+  }, [facilities]);
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">Investments</span>
+      </nav>
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Shahjalal Islami Bank PLC</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Corporate Investment Facilities</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Monitor approved funded and non-funded Islamic credit limits, trace outstanding drawdowns, and request vendor disbursements.
+          </p>
+        </div>
+      </div>
+
+      {/* Aggregate Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="p-5">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground">Total Approved limits</span>
+          <div className="text-2xl font-bold font-mono text-navy mt-2">
+            BDT {stats.limit.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Funded & Non-Funded limits</div>
+        </Card>
+
+        <Card className="p-5">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground">Total Outstanding</span>
+          <div className="text-2xl font-bold font-mono text-destructive mt-2">
+            BDT {stats.outstanding.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">
+            {stats.limit > 0 ? ((stats.outstanding / stats.limit) * 100).toFixed(1) : 0}% Limit Utilization
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground">Total Available limit</span>
+          <div className="text-2xl font-bold font-mono text-success mt-2">
+            BDT {stats.available.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Available for Payout Drawdown</div>
+        </Card>
+      </div>
+
+      {/* Limits Utilisation Progress bar list */}
+      <Card className="p-5 space-y-4">
+        <h2 className="font-display font-semibold text-sm uppercase tracking-wider text-muted-foreground font-bold">Facility Limit Utilization</h2>
+        <div className="space-y-4 text-xs">
+          {facilities.map(f => {
+            const pct = Math.min(100, Math.round((Number(f.outstandingAmount) / Number(f.limitAmount)) * 100));
+            return (
+              <div key={f.id} className="space-y-2">
+                <div className="flex justify-between font-medium">
+                  <span>{f.facilityNo} ({f.facilityType})</span>
+                  <span>{pct}% Utilized ({Number(f.outstandingAmount).toLocaleString()} / {Number(f.limitAmount).toLocaleString()} BDT)</span>
+                </div>
+                <div className="w-full h-2 rounded bg-muted overflow-hidden">
+                  <div className={`h-full rounded transition-all duration-300 ${pct > 80 ? "bg-destructive" : pct > 50 ? "bg-gold" : "bg-navy"}`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* Facilities Grid */}
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="all">All Limits ({facilities.length})</TabsTrigger>
+          <TabsTrigger value="murabaha">Murabaha Limits</TabsTrigger>
+          <TabsTrigger value="hpsm">HPSM Limits</TabsTrigger>
+        </TabsList>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {filtered.map(fac => {
+            const avail = Number(fac.limitAmount) - Number(fac.outstandingAmount);
+            return (
+              <Card key={fac.id} className="p-6 flex flex-col justify-between hover:border-gold/50 transition-colors border border-border">
+                <div className="space-y-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-gold font-bold">{fac.facilityType}</span>
+                      <h2 className="font-display font-bold text-lg text-navy mt-0.5">{fac.facilityNo}</h2>
+                    </div>
+                    <Badge variant="outline" className={fac.status === "Approved" ? "bg-success/5 text-success border-success/20" : "bg-warning/5 text-warning border-warning/20"}>
+                      {fac.status}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <span className="text-muted-foreground">Approved Limit:</span>
+                      <div className="font-semibold font-mono text-sm mt-0.5">BDT {Number(fac.limitAmount).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Outstanding:</span>
+                      <div className="font-semibold font-mono text-sm mt-0.5 text-destructive">BDT {Number(fac.outstandingAmount).toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Available Room:</span>
+                      <div className="font-semibold font-mono text-sm mt-0.5 text-success">BDT {avail.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Markup Profit:</span>
+                      <div className="font-semibold font-mono text-sm mt-0.5">{fac.profitRate}% p.a.</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 pt-4 border-t border-border flex justify-between items-center text-xs">
+                  <span className="text-muted-foreground">Expires: {fac.expiryDate}</span>
+                  <Button size="sm" variant="ghost" className="text-gold hover:text-gold/80 hover:bg-gold/5 text-xs gap-1.5 p-0 h-auto font-semibold" asChild>
+                    <Link to="/app/$" params={{ _splat: `investment/view/${fac.id}` }}>
+                      View Facility Statement <ChevronRight className="w-4 h-4" />
+                    </Link>
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      </Tabs>
+    </div>
+  );
+}
+
+function InvestmentFacilityView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+
+  const [showRequestDialog, setShowRequestDialog] = useState(false);
+  const [reqVendor, setReqVendor] = useState("");
+  const [reqInvoice, setReqInvoice] = useState("");
+  const [reqAmount, setReqAmount] = useState("");
+  const [reqRemarks, setReqRemarks] = useState("");
+
+  const ledger = useMemo(() => {
+    return getInvestmentTransactions(record.facilityNo);
+  }, [record.facilityNo]);
+
+  // Filtering transactions
+  const transactions = useMemo(() => {
+    let list = [...ledger];
+
+    // Filter by type
+    if (typeFilter === "disbursement") {
+      list = list.filter(t => t.type === "Disbursement");
+    } else if (typeFilter === "repayment") {
+      list = list.filter(t => t.type === "Repayment");
+    }
+
+    // Filter by query
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(t => 
+        t.description.toLowerCase().includes(q) ||
+        t.id.toLowerCase().includes(q) ||
+        t.reference.toLowerCase().includes(q)
+      );
+    }
+
+    return list;
+  }, [ledger, query, typeFilter]);
+
+  // Aggregated statements stats
+  const stats = useMemo(() => {
+    let disbursements = 0;
+    let repayments = 0;
+    transactions.forEach(t => {
+      if (t.type === "Disbursement") disbursements += t.amount;
+      else repayments += t.amount;
+    });
+    return {
+      disbursements,
+      repayments
+    };
+  }, [transactions]);
+
+  function handleRequestDisbursement(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reqVendor || !reqAmount) {
+      toast.error("Please fill in Vendor and Amount");
+      return;
+    }
+    const amtNum = parseFloat(reqAmount);
+    if (isNaN(amtNum) || amtNum <= 0) {
+      toast.error("Invalid amount");
+      return;
+    }
+
+    const avail = Number(record.limitAmount) - Number(record.outstandingAmount);
+    if (amtNum > avail) {
+      toast.error("Disbursement amount exceeds available headroom");
+      return;
+    }
+
+    // Submit to Approval Queue
+    const session = getSession();
+    const maker = session?.username || "maker";
+    const appRows = JSON.parse(localStorage.getItem(`sjibl.ctb.v2.approval`) || "[]");
+    
+    const newApproval = {
+      id: `TXN-${Math.floor(10000 + Math.random() * 90000)}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: "Pending",
+      ref: record.id,
+      moduleTitle: "Investment (Finance/Credit)",
+      details: `Request Disbursement BDT ${amtNum.toLocaleString()} to ${reqVendor} (Limit: ${record.facilityNo}, Ref: ${reqInvoice || "N/A"})`,
+      maker: maker,
+      risk: amtNum >= 10000000 ? "High" : amtNum >= 1000000 ? "Medium" : "Low",
+      amount: amtNum,
+      sourceSlug: "investment",
+      remarks: "Awaiting Checker verification of supplier proforma invoice and delivery receipt."
+    };
+    appRows.unshift(newApproval);
+    localStorage.setItem(`sjibl.ctb.v2.approval`, JSON.stringify(appRows));
+
+    toast.success("Disbursement request queued for Maker-Checker approval!");
+    setShowRequestDialog(false);
+    setReqVendor("");
+    setReqInvoice("");
+    setReqAmount("");
+    setReqRemarks("");
+  }
+
+  function handleDownloadStatement(format: "PDF" | "CSV") {
+    if (format === "CSV") {
+      downloadInvestmentCSV(record.facilityNo, ledger);
+    } else {
+      downloadInvestmentPDF(record.facilityNo, record.facilityType, Number(record.limitAmount), Number(record.outstandingAmount), ledger);
+    }
+    toast.success(`Facility Statement downloaded successfully in ${format} format!`);
+  }
+
+  const isMurabaha = record.facilityType === "Bai-Murabaha";
+  const available = Number(record.limitAmount) - Number(record.outstandingAmount);
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "investment" }} className="hover:text-navy">Investments</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.facilityNo}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "investment" } })}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-gold font-bold">{record.facilityType}</div>
+            <h1 className="font-display text-3xl font-bold text-navy mt-0.5">{record.facilityNo}</h1>
+            <p className="text-xs text-muted-foreground mt-1">
+              Approved limit: BDT {Number(record.limitAmount).toLocaleString()} · Markup rate: {record.profitRate}% p.a.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {/* Download Button */}
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Download className="w-4 h-4 mr-2" /> Download Statement
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-xs">
+              <DialogHeader>
+                <DialogTitle className="text-sm font-bold">Export Statement</DialogTitle>
+                <DialogDescription className="text-xs">
+                  Choose formatting for statement download.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-2 py-3">
+                <Button variant="outline" size="sm" onClick={() => handleDownloadStatement("PDF")}>
+                  <FileText className="w-4 h-4 mr-2 text-destructive" /> PDF Format (.txt)
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => handleDownloadStatement("CSV")}>
+                  <FileSpreadsheet className="w-4 h-4 mr-2 text-success" /> Excel CSV (.csv)
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Request Disbursement Dialog */}
+          <Dialog open={showRequestDialog} onOpenChange={setShowRequestDialog}>
+            <DialogTrigger asChild>
+              <Button className="bg-navy text-navy-foreground hover:bg-navy/90">
+                <Plus className="w-4 h-4 mr-2" /> {isMurabaha ? "Request Procurement" : "Request Drawdown"}
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <form onSubmit={handleRequestDisbursement}>
+                <DialogHeader>
+                  <DialogTitle>{isMurabaha ? "Request Murabaha Procurement Payout" : "Request Lease Drawdown"}</DialogTitle>
+                  <DialogDescription>
+                    Submit supplier proforma invoice to disburse funds from the approved headroom.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-3 text-sm">
+                  <div className="space-y-2">
+                    <Label htmlFor="vendor">Supplier / Vendor Name</Label>
+                    <Input id="vendor" placeholder="e.g. Steel-Works Bangladesh" value={reqVendor} onChange={(e) => setReqVendor(e.target.value)} required />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="invoice">Invoice / Quotation Ref</Label>
+                      <Input id="invoice" placeholder="e.g. PI-9902" value={reqInvoice} onChange={(e) => setReqInvoice(e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="amount">Disbursement BDT</Label>
+                      <Input id="amount" type="number" placeholder="Amount" value={reqAmount} onChange={(e) => setReqAmount(e.target.value)} required />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Upload Proforma Quotation</Label>
+                    <div className="flex items-center justify-center border border-dashed border-input hover:border-gold rounded-md p-4 cursor-pointer text-xs text-muted-foreground">
+                      <Upload className="w-5 h-5 mr-2" /> Upload proforma_invoice.pdf
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="remarks">Remarks / Delivery specifications</Label>
+                    <Input id="remarks" placeholder="Goods description, delivery terms" value={reqRemarks} onChange={(e) => setReqRemarks(e.target.value)} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setShowRequestDialog(false)}>Cancel</Button>
+                  <Button type="submit" className="bg-navy text-navy-foreground hover:bg-navy/90">
+                    Submit to Checker
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="p-4 bg-muted/40">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Approved limit</span>
+          <div className="text-xl font-bold font-mono text-navy mt-1">
+            BDT {Number(record.limitAmount).toLocaleString()}
+          </div>
+        </Card>
+
+        <Card className="p-4 bg-muted/40">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Outstanding principal</span>
+          <div className="text-xl font-bold font-mono text-destructive mt-1">
+            BDT {Number(record.outstandingAmount).toLocaleString()}
+          </div>
+        </Card>
+
+        <Card className="p-4 bg-muted/40">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Available headroom</span>
+          <div className="text-xl font-bold font-mono text-success mt-1">
+            BDT {available.toLocaleString()}
+          </div>
+        </Card>
+
+        <Card className="p-4 bg-muted/40">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Facility Expiry</span>
+          <div className="text-sm font-semibold mt-1.5 flex items-center gap-1.5">
+            <Calendar className="w-4 h-4 text-gold shrink-0" /> {record.expiryDate}
+          </div>
+        </Card>
+      </div>
+
+      {/* Main Ledger Table and side panel */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          {/* Table */}
+          <Card className="p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="font-display font-semibold text-base text-navy font-bold">Facility Statement Ledger</h2>
+
+              <div className="flex gap-2 text-xs flex-wrap">
+                <div className="relative max-w-xs">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input placeholder="Search ref..." value={query} onChange={(e) => setQuery(e.target.value)} className="pl-8 h-8 text-xs w-40" />
+                </div>
+                <Select value={typeFilter} onValueChange={setTypeFilter}>
+                  <SelectTrigger className="h-8 w-28 text-xs">
+                    <SelectValue placeholder="All types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All transactions</SelectItem>
+                    <SelectItem value="disbursement">Disbursements</SelectItem>
+                    <SelectItem value="repayment">Repayments</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="border rounded-md overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Reference</TableHead>
+                    <TableHead>Narration / Vendor</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Outstanding Bal</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {transactions.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-10">
+                        No transactions found.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    transactions.map(t => (
+                      <TableRow key={t.id}>
+                        <TableCell className="text-xs whitespace-nowrap">{t.date}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{t.id}</TableCell>
+                        <TableCell className="text-sm font-medium">{t.description}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] uppercase font-semibold ${t.type === "Disbursement" ? "border-destructive text-destructive" : "border-success text-success"}`}>
+                            {t.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-semibold">
+                          BDT {t.amount.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          BDT {t.balanceAfter.toLocaleString()}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </div>
+
+        {/* Side Panel terms & Shariah */}
+        <div className="space-y-6">
+          <Card className="p-5 space-y-4">
+            <h2 className="font-display font-semibold text-lg text-navy">Security & Collateral</h2>
+            <div className="text-xs space-y-3">
+              <p className="text-muted-foreground leading-relaxed">
+                {record.securityDetails || "Security hypothecation of current assets and personal guarantees."}
+              </p>
+              <div className="border-t border-border pt-3 space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Facility Status:</span>
+                  <span className="font-semibold text-success flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Active
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Insurance Cover:</span>
+                  <span className="font-semibold">Takaful covered (110%)</span>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {isMurabaha ? (
+            <Card className="p-5 border-gold bg-gold/[0.04] space-y-3 text-xs">
+              <div className="flex items-center gap-2 text-gold">
+                <Coins className="w-5 h-5 shrink-0" />
+                <h2 className="font-display font-semibold text-lg text-navy">Murabaha Principles</h2>
+              </div>
+              <p className="text-muted-foreground leading-relaxed">
+                Bai-Murabaha is a cost-plus sale contract. The bank purchases goods from supplier at customer's request and sells them to the customer at cost + specified markup.
+              </p>
+              <div className="space-y-1.5 pt-2 border-t border-gold/20">
+                <div className="flex justify-between">
+                  <span>Markup profit rate:</span>
+                  <span className="font-semibold">{record.profitRate}% p.a.</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Repayment model:</span>
+                  <span className="font-semibold">Deferred lumpsum / EMI</span>
+                </div>
+              </div>
+            </Card>
+          ) : (
+            <Card className="p-5 border-navy/30 bg-navy/[0.02] space-y-3 text-xs">
+              <div className="flex items-center gap-2 text-navy">
+                <Info className="w-5 h-5 shrink-0 text-gold" />
+                <h2 className="font-display font-semibold text-lg">HPSM Principles</h2>
+              </div>
+              <p className="text-muted-foreground leading-relaxed">
+                Hire Purchase under Shirkatul Melk (HPSM) is a lease-to-own facility. The bank and customer jointly purchase an asset. The bank leases its share to the customer for rental, which is paid along with ownership purchase installments.
+              </p>
+              <div className="space-y-1.5 pt-2 border-t border-border">
+                <div className="flex justify-between">
+                  <span>Rental rate:</span>
+                  <span className="font-semibold">{record.profitRate}% p.a.</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Ownership transfer:</span>
+                  <span className="font-semibold">Gradual on lease end</span>
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Client-Side Investment Statement Download ----------------- */
+
+function downloadInvestmentCSV(facilityNo: string, txs: InvestmentTransaction[]) {
+  const headers = "Date,Transaction ID,Description,Type,Amount,Outstanding Balance,Reference\n";
+  const rows = txs.map(t => 
+    `"${t.date}","${t.id}","${t.description.replace(/"/g, '""')}","${t.type}",${t.amount},${t.balanceAfter},"${t.reference}"`
+  ).join("\n");
+  const blob = new Blob([headers + rows], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `facility_${facilityNo}_${new Date().toISOString().slice(0,10)}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function downloadInvestmentPDF(facilityNo: string, type: string, limit: number, outstanding: number, txs: InvestmentTransaction[]) {
+  let text = `SHAHJALAL ISLAMI BANK PLC\nINVESTMENT FACILITY STATEMENT\n`;
+  text += `========================================================================\n`;
+  text += `Facility Number: ${facilityNo}\n`;
+  text += `Mode of Finance: ${type}\n`;
+  text += `Approved Limit: BDT ${limit.toLocaleString()}\n`;
+  text += `Outstanding Balance: BDT ${outstanding.toLocaleString()}\n`;
+  text += `Available Headroom: BDT ${(limit - outstanding).toLocaleString()}\n`;
+  text += `Statement Date: ${new Date().toLocaleString()}\n`;
+  text += `========================================================================\n\n`;
+  text += `DATE        TXN ID      TYPE          AMOUNT            OUTSTANDING       NARRATION\n`;
+  text += `------------------------------------------------------------------------\n`;
+  
+  txs.forEach(t => {
+    const amt = (t.type === "Disbursement" ? "+" : "-") + t.amount.toLocaleString().padStart(12);
+    const bal = t.balanceAfter.toLocaleString().padStart(12);
+    text += `${t.date}  ${t.id.padEnd(10)}  ${t.type.padEnd(12)}  ${amt.padEnd(16)}  ${bal.padEnd(16)}  ${t.description.slice(0, 40)}\n`;
+  });
+  
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `facility_${facilityNo}_${new Date().toISOString().slice(0,10)}.txt`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/* -------------------- Enhanced Approval Dashboard Views -------------------- */
+
+interface EmailLog {
+  id: string;
+  time: string;
+  to: string;
+  subject: string;
+  body: string;
+}
+
+function getEmailLogs(): EmailLog[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem("sjibl.ctb.v2.email_log");
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return [];
+}
+
+function addEmailLog(to: string, subject: string, body: string) {
+  if (typeof window === "undefined") return;
+  const logs = getEmailLogs();
+  logs.unshift({
+    id: `MSG-${Math.floor(1000 + Math.random() * 9000)}`,
+    time: new Date().toISOString(),
+    to,
+    subject,
+    body
+  });
+  localStorage.setItem("sjibl.ctb.v2.email_log", JSON.stringify(logs));
+}
+
+function ApprovalDashboardView() {
+  const navigate = useNavigate();
+  const approvals = list("approval");
+  const [tab, setTab] = useState("Pending");
+  const [catFilter, setCatFilter] = useState("all");
+  const [query, setQuery] = useState("");
+
+  const pendingCount = useMemo(() => approvals.filter(a => a.status === "Pending").length, [approvals]);
+  const approvedCount = useMemo(() => approvals.filter(a => a.status === "Approved").length, [approvals]);
+  const rejectedCount = useMemo(() => approvals.filter(a => a.status === "Rejected").length, [approvals]);
+
+  // Aggregate stats
+  const totalPendingBDT = useMemo(() => {
+    return approvals
+      .filter(a => a.status === "Pending")
+      .reduce((acc, a) => acc + Number(a.amount || 0), 0);
+  }, [approvals]);
+
+  const highRiskCount = useMemo(() => {
+    return approvals.filter(a => a.status === "Pending" && a.risk === "High").length;
+  }, [approvals]);
+
+  // Payment type categories pending lists
+  const catTransfers = useMemo(() => {
+    return approvals.filter(a => a.status === "Pending" && (a.sourceSlug === "fund-transfer" || a.sourceSlug === "bulk-transfer" || a.sourceSlug === "bill-pay"));
+  }, [approvals]);
+
+  const catTrade = useMemo(() => {
+    return approvals.filter(a => a.status === "Pending" && (a.sourceSlug === "lc-initiation" || a.sourceSlug === "import-bill" || a.sourceSlug === "murabaha"));
+  }, [approvals]);
+
+  const catZakat = useMemo(() => {
+    return approvals.filter(a => a.status === "Pending" && a.sourceSlug === "zakat");
+  }, [approvals]);
+
+  const catOther = useMemo(() => {
+    return approvals.filter(a => a.status === "Pending" && !["fund-transfer", "bulk-transfer", "bill-pay", "lc-initiation", "import-bill", "murabaha", "zakat"].includes(String(a.sourceSlug)));
+  }, [approvals]);
+
+  const filtered = useMemo(() => {
+    let list = approvals.filter(a => a.status === tab);
+
+    // Apply category filter
+    if (tab === "Pending") {
+      if (catFilter === "transfers") {
+        list = catTransfers;
+      } else if (catFilter === "trade") {
+        list = catTrade;
+      } else if (catFilter === "zakat") {
+        list = catZakat;
+      } else if (catFilter === "other") {
+        list = catOther;
+      }
+    }
+
+    // Apply search query
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(a => 
+        String(a.ref || "").toLowerCase().includes(q) ||
+        String(a.details || "").toLowerCase().includes(q) ||
+        String(a.maker || "").toLowerCase().includes(q) ||
+        String(a.moduleTitle || "").toLowerCase().includes(q)
+      );
+    }
+
+    return list;
+  }, [approvals, tab, catFilter, query, catTransfers, catTrade, catZakat, catOther]);
+
+  const emailLogs = getEmailLogs().slice(0, 5);
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">Approvals</span>
+      </nav>
+
+      {/* Pending alerts banner */}
+      {pendingCount > 0 && (
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive rounded-lg p-4 flex items-start gap-3">
+          <Info className="w-5 h-5 shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold text-sm">Pending Authorizations Required</div>
+            <p className="text-xs mt-1 text-destructive/80 leading-normal">
+              You have {pendingCount} transaction requests awaiting Maker-Checker authorization. Failure to authorize in time may cancel the value date rate lock.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold font-bold">Checker Workspace</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Corporate Approval Dashboard</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Review and sign pending payouts, trade transactions, and corporate requests using multi-factor OTP validation.
+          </p>
+        </div>
+      </div>
+
+      {/* Aggregate Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="p-5">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground">Pending Requests</span>
+          <div className="text-3xl font-bold font-mono text-navy mt-2">
+            {pendingCount}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Awaiting checker action</div>
+        </Card>
+
+        <Card className="p-5">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground">Total Pending Value</span>
+          <div className="text-2xl sm:text-3xl font-bold font-mono text-foreground mt-2 truncate">
+            BDT {totalPendingBDT.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Sum of pending transfers/L/Cs</div>
+        </Card>
+
+        <Card className="p-5 border-destructive bg-destructive/[0.02]">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground">High Risk Alerts</span>
+          <div className="text-3xl font-bold font-mono text-destructive mt-2">
+            {highRiskCount}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Requests over BDT 10,000,000 / L/Cs</div>
+        </Card>
+      </div>
+
+      {/* Transaction payment type-wise Request summary */}
+      <div className="space-y-3">
+        <h2 className="font-display font-semibold text-sm uppercase tracking-wider text-muted-foreground font-bold">Payment Type-Wise Summaries</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card 
+            className={`p-4 cursor-pointer hover:border-gold/50 transition-colors ${catFilter === "transfers" ? "border-gold bg-gold/[0.02]" : "border-border"}`}
+            onClick={() => setCatFilter(catFilter === "transfers" ? "all" : "transfers")}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-navy">Transfers & Bill Pay</span>
+              <Badge className="bg-navy/10 text-navy hover:bg-navy/10">{catTransfers.length}</Badge>
+            </div>
+            <div className="mt-3 text-base lg:text-lg font-bold font-mono truncate">
+              BDT {catTransfers.reduce((acc, a) => acc + Number(a.amount || 0), 0).toLocaleString()}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Fund transfers, Bulk files, Utility</p>
+          </Card>
+
+          <Card 
+            className={`p-4 cursor-pointer hover:border-gold/50 transition-colors ${catFilter === "trade" ? "border-gold bg-gold/[0.02]" : "border-border"}`}
+            onClick={() => setCatFilter(catFilter === "trade" ? "all" : "trade")}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-navy">Trade & Murabaha</span>
+              <Badge className="bg-gold/10 text-gold hover:bg-gold/10">{catTrade.length}</Badge>
+            </div>
+            <div className="mt-3 text-base lg:text-lg font-bold font-mono truncate">
+              BDT {catTrade.reduce((acc, a) => acc + Number(a.amount || 0), 0).toLocaleString()}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">LC application, Murabaha, Import bills</p>
+          </Card>
+
+          <Card 
+            className={`p-4 cursor-pointer hover:border-gold/50 transition-colors ${catFilter === "zakat" ? "border-gold bg-gold/[0.02]" : "border-border"}`}
+            onClick={() => setCatFilter(catFilter === "zakat" ? "all" : "zakat")}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-navy">Zakat & CSR Port</span>
+              <Badge className="bg-navy/10 text-navy hover:bg-navy/10">{catZakat.length}</Badge>
+            </div>
+            <div className="mt-3 text-base lg:text-lg font-bold font-mono truncate">
+              BDT {catZakat.reduce((acc, a) => acc + Number(a.amount || 0), 0).toLocaleString()}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Islamic charity, CSR payouts</p>
+          </Card>
+
+          <Card 
+            className={`p-4 cursor-pointer hover:border-gold/50 transition-colors ${catFilter === "other" ? "border-gold bg-gold/[0.02]" : "border-border"}`}
+            onClick={() => setCatFilter(catFilter === "other" ? "all" : "other")}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-navy">Other Requests</span>
+              <Badge className="bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/10">{catOther.length}</Badge>
+            </div>
+            <div className="mt-3 text-base lg:text-lg font-bold font-mono truncate">
+              BDT {catOther.reduce((acc, a) => acc + Number(a.amount || 0), 0).toLocaleString()}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Certificates, Beneficiary Maker, Admin</p>
+          </Card>
+        </div>
+      </div>
+
+      {/* Main Table */}
+      <Tabs value={tab} onValueChange={(t) => { setTab(t); setCatFilter("all"); }} className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-card p-3 rounded-lg border border-border">
+          <TabsList>
+            <TabsTrigger value="Pending">Pending Action ({pendingCount})</TabsTrigger>
+            <TabsTrigger value="Approved">Approved Requests ({approvedCount})</TabsTrigger>
+            <TabsTrigger value="Rejected">Rejected Requests ({rejectedCount})</TabsTrigger>
+          </TabsList>
+
+          <div className="relative max-w-xs flex-1">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search approvals..." value={query} onChange={(e) => setQuery(e.target.value)} className="pl-9 h-9" />
+          </div>
+        </div>
+
+        <div className="border rounded-md overflow-hidden bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Reference</TableHead>
+                <TableHead>Submission</TableHead>
+                <TableHead>Module</TableHead>
+                <TableHead>Description / details</TableHead>
+                <TableHead>Maker</TableHead>
+                <TableHead>Risk</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-10">
+                    No approval requests found matching filters.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filtered.map(app => {
+                  return (
+                    <TableRow key={app.id}>
+                      <TableCell className="font-mono text-xs text-navy font-semibold">{app.ref}</TableCell>
+                      <TableCell className="text-xs whitespace-nowrap">{new Date(app.createdAt).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-xs font-medium">{app.moduleTitle}</TableCell>
+                      <TableCell className="text-sm font-semibold max-w-sm truncate">{app.details}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{app.maker}</TableCell>
+                      <TableCell>
+                        <Badge 
+                          variant="outline" 
+                          className={app.risk === "High" ? "border-destructive text-destructive" : app.risk === "Medium" ? "border-warning text-warning" : "border-muted-foreground text-muted-foreground"}
+                        >
+                          {app.risk}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold">
+                        {app.amount > 0 ? `BDT ${app.amount.toLocaleString()}` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button size="sm" variant="ghost" className="text-gold hover:text-gold/80 hover:bg-gold/5 font-semibold" asChild>
+                          <Link to="/app/$" params={{ _splat: `approval/view/${app.id}` }}>
+                            {tab === "Pending" ? "Review & Sign" : "View Details"}
+                          </Link>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Tabs>
+
+      {/* Notifications Sent Logs */}
+      {emailLogs.length > 0 && (
+        <Card className="p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display font-semibold text-sm uppercase tracking-wider text-muted-foreground font-bold">Notification Alert Log (Checker Dispatch)</h2>
+            <Badge className="bg-gold text-gold-foreground font-semibold">Live SMTP Alerts</Badge>
+          </div>
+          <div className="space-y-3 text-xs font-mono">
+            {emailLogs.map(log => (
+              <div key={log.id} className="p-3 bg-muted rounded border border-border space-y-1">
+                <div className="flex justify-between text-[10px] text-muted-foreground border-b border-border pb-1">
+                  <span>ID: {log.id} · {new Date(log.time).toLocaleTimeString()}</span>
+                  <span className="text-success font-semibold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Emailed to Maker
+                  </span>
+                </div>
+                <div><span className="font-semibold text-navy font-sans">To:</span> {log.to}</div>
+                <div><span className="font-semibold text-navy font-sans">Subject:</span> {log.subject}</div>
+                <div className="text-foreground mt-1 text-xs pt-1 leading-normal font-sans italic bg-card p-2 rounded">
+                  {log.body}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function ApprovalDetailView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const [showOtpDialog, setShowOtpDialog] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
+  const [actionType, setActionType] = useState<"Approve" | "Reject">("Approve");
+
+  // Fetch the source record metadata dynamically
+  const sourceRecord = useMemo(() => {
+    if (record.sourceSlug && record.ref) {
+      return get(record.sourceSlug, record.ref);
+    }
+    return null;
+  }, [record.sourceSlug, record.ref]);
+
+  const sourceSchema = useMemo(() => {
+    if (record.sourceSlug) {
+      return getSchema(record.sourceSlug);
+    }
+    return null;
+  }, [record.sourceSlug]);
+
+  function handleActionSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (otpCode !== "123456") {
+      toast.error("Invalid OTP Code. Please use test code 123456.");
+      return;
+    }
+
+    const finalStatus = actionType === "Approve" ? "Approved" : "Rejected";
+    
+    // Update the approval task in store
+    update("approval", record.id, { status: finalStatus });
+
+    // Send notifications email
+    const mailTo = `${record.maker || "maker"}@globex.bd`;
+    const mailSubject = `Corporate Transaction Action Alert: ${finalStatus} Reference ${record.ref}`;
+    const mailBody = `Dear Maker, \n\nYour submitted transaction of BDT ${record.amount.toLocaleString()} (Reference Ref: ${record.ref}) under the ${record.moduleTitle} module has been ${finalStatus.toUpperCase()} by rashed.c (Checker) on ${new Date().toLocaleString()}.\n\nRemarks: Checked and validated.\n\nShahjalal Islami Bank PLC.`;
+    
+    addEmailLog(mailTo, mailSubject, mailBody);
+
+    toast.success(`Transaction successfully ${finalStatus.toLowerCase()} and Maker notified via email!`);
+    setShowOtpDialog(false);
+    setOtpCode("");
+    navigate({ to: "/app/$", params: { _splat: "approval" } });
+  }
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "approval" }} className="hover:text-navy">Approvals</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.ref}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "approval" } })}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-gold font-bold">{record.moduleTitle}</div>
+            <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Authorize Request</h1>
+            <div className="flex items-center gap-2 mt-1.5">
+              <span className="text-xs font-mono text-muted-foreground">ID: {record.ref}</span>
+              <Badge variant="outline" className={record.risk === "High" ? "border-destructive text-destructive" : record.risk === "Medium" ? "border-warning text-warning" : "border-muted-foreground text-muted-foreground"}>
+                {record.risk} Risk
+              </Badge>
+              <Badge variant="outline" className={record.status === "Approved" ? "border-success text-success" : record.status === "Rejected" ? "border-destructive text-destructive" : "border-warning text-warning"}>
+                {record.status}
+              </Badge>
+            </div>
+          </div>
+        </div>
+
+        {record.status === "Pending" && (
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              className="border-destructive text-destructive hover:bg-destructive/10"
+              onClick={() => { setActionType("Reject"); setShowOtpDialog(true); }}
+            >
+              <X className="w-4 h-4 mr-2" /> Reject Payout
+            </Button>
+            <Button 
+              className="bg-navy text-navy-foreground hover:bg-navy/90"
+              onClick={() => { setActionType("Approve"); setShowOtpDialog(true); }}
+            >
+              <Check className="w-4 h-4 mr-2" /> Approve & Sign
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* OTP Dialog */}
+      <Dialog open={showOtpDialog} onOpenChange={setShowOtpDialog}>
+        <DialogContent className="max-w-sm">
+          <form onSubmit={handleActionSubmit}>
+            <DialogHeader>
+              <DialogTitle>{actionType === "Approve" ? "Approve Transaction Request" : "Reject Transaction Request"}</DialogTitle>
+              <DialogDescription className="text-xs">
+                To confirm the checker action, please enter the One-Time Passcode sent to rashed.c (Checker) verified email.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-3 text-sm">
+              <div className="space-y-2">
+                <Label htmlFor="otp">Enter 6-Digit Passcode</Label>
+                <Input id="otp" type="password" placeholder="e.g. 123456" maxLength={6} className="text-center font-mono text-xl tracking-[0.2em] font-semibold h-11" value={otpCode} onChange={(e) => setOtpCode(e.target.value)} required />
+                <p className="text-[10px] text-muted-foreground text-center bg-muted py-1 rounded font-mono">
+                  Demo bypass helper: Use passcode 123456
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowOtpDialog(false)}>Cancel</Button>
+              <Button type="submit" className={actionType === "Approve" ? "bg-success text-success-foreground hover:bg-success/90" : "bg-destructive text-destructive-foreground hover:bg-destructive/90"}>
+                Confirm {actionType}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Content Columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          {/* Detailed Request Summary */}
+          <Card className="p-6 space-y-4">
+            <h2 className="font-display font-semibold text-lg text-navy">Review Summary details</h2>
+            <div className="p-4 bg-muted/40 rounded-lg text-sm leading-relaxed text-foreground">
+              {record.details}
+            </div>
+
+            <dl className="grid grid-cols-2 gap-4 text-xs">
+              <div>
+                <dt className="text-muted-foreground uppercase tracking-wider text-[10px]">Requested By (Maker)</dt>
+                <dd className="font-semibold text-sm mt-0.5">{record.maker}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground uppercase tracking-wider text-[10px]">Submission Time</dt>
+                <dd className="font-semibold text-sm mt-0.5">{new Date(record.createdAt).toLocaleString()}</dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-muted-foreground uppercase tracking-wider text-[10px]">Maker Remarks</dt>
+                <dd className="font-semibold text-sm mt-0.5 bg-muted/20 p-2.5 rounded border leading-relaxed">{record.remarks || "No supplementary maker remarks provided."}</dd>
+              </div>
+            </dl>
+          </Card>
+
+          {/* Dynamic Original Record Metadata Card */}
+          {sourceRecord && sourceSchema && (
+            <Card className="p-6">
+              <h2 className="font-display font-semibold text-lg text-navy mb-4">Underlying Record Metadata</h2>
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 text-xs">
+                {sourceSchema.fields.map(f => {
+                  const val = sourceRecord[f.name];
+                  if (val === undefined || val === null || val === "") return null;
+                  return (
+                    <div key={f.name} className={f.span === 2 ? "sm:col-span-2" : ""}>
+                      <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">{f.label}</dt>
+                      <dd className={`mt-1 font-semibold text-sm ${f.type === "amount" ? "font-mono" : ""} ${f.type === "textarea" ? "whitespace-pre-wrap leading-relaxed" : ""}`}>
+                        {f.type === "amount" ? `BDT ${Number(val).toLocaleString()}` : String(val)}
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </Card>
+          )}
+        </div>
+
+        {/* Side Panel Entitlements */}
+        <div className="space-y-6">
+          <Card className="p-5 space-y-4">
+            <h2 className="font-display font-semibold text-lg text-navy">Checker Policy ENT</h2>
+            <div className="text-xs space-y-3 text-muted-foreground leading-relaxed">
+              <p>
+                In compliance with bank Shariah Maker-Checker dual authorization protocols, high-risk requests (Trade and transactions BDT &gt; 1,000,000) require approval signatures.
+              </p>
+              <p>
+                Checker entitlements are verified against Entitlement List upon OTP signing.
+              </p>
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ===================== TERM DEPOSIT (TD) VIEWS ===================== */
+
+function TermDepositDashboardView() {
+  const deposits = list("term-deposit");
+  const navigate = useNavigate();
+
+  const totalPrincipal = deposits.reduce((s: number, d: any) => s + (d.principalAmount || 0), 0);
+  const totalExpectedProfit = deposits.reduce((s: number, d: any) => s + (d.expectedProfit || 0), 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const activeCount = deposits.filter((d: any) => d.status === "Approved" && d.maturityDate >= today).length;
+  const maturedCount = deposits.filter((d: any) => d.maturityDate < today).length;
+
+  const fmt = (n: number) => `BDT ${n.toLocaleString()}`;
+
+  const maturityAlerts = deposits.filter((d: any) => {
+    const days = Math.ceil((new Date(d.maturityDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+    return days >= 0 && days <= 90;
+  });
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-medium">Term Deposits</span>
+      </nav>
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">ACCOUNTS & DEPOSITS</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-1">Term Deposit Portfolio</h1>
+          <p className="text-sm text-muted-foreground mt-1">Mudaraba fixed deposit portfolio overview & profit schedule</p>
+        </div>
+      </div>
+
+      {/* KPI Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-md bg-navy/10 grid place-items-center"><Coins className="w-4 h-4 text-navy" /></div>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Total Principal</span>
+          </div>
+          <div className="font-mono text-xl font-bold text-navy">{fmt(totalPrincipal)}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{deposits.length} FDR account{deposits.length !== 1 ? "s" : ""}</div>
+        </Card>
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-md bg-gold/10 grid place-items-center"><Sparkles className="w-4 h-4 text-gold" /></div>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Expected Profit</span>
+          </div>
+          <div className="font-mono text-xl font-bold text-gold">{fmt(totalExpectedProfit)}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Total across all tenures</div>
+        </Card>
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-md bg-success/10 grid place-items-center"><CheckCircle2 className="w-4 h-4 text-success" /></div>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Active FDRs</span>
+          </div>
+          <div className="font-mono text-xl font-bold text-success">{activeCount}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Currently running deposits</div>
+        </Card>
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-md bg-warning/10 grid place-items-center"><Calendar className="w-4 h-4 text-warning" /></div>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Matured FDRs</span>
+          </div>
+          <div className="font-mono text-xl font-bold text-warning">{maturedCount}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Awaiting renewal / withdrawal</div>
+        </Card>
+      </div>
+
+      {/* Maturity Alerts */}
+      {maturityAlerts.length > 0 && (
+        <Card className="p-5 border-l-4 border-l-warning bg-warning/5">
+          <div className="flex items-center gap-2 mb-3">
+            <Calendar className="w-4 h-4 text-warning" />
+            <h2 className="font-semibold text-sm text-warning">Upcoming Maturity Alerts</h2>
+          </div>
+          <div className="space-y-2">
+            {maturityAlerts.map((d: any) => {
+              const days = Math.ceil((new Date(d.maturityDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+              return (
+                <div key={d.id} className="flex items-center justify-between text-xs p-2 rounded bg-background border">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-navy">{d.receiptNo}</span>
+                    <span className="text-muted-foreground">·</span>
+                    <span>{d.type}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono">Principal: {fmt(d.principalAmount)}</span>
+                    <Badge variant="outline" className={days <= 30 ? "border-destructive text-destructive" : "border-warning text-warning"}>
+                      {days === 0 ? "Matures Today" : `${days}d to maturity`}
+                    </Badge>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* FDR Portfolio Table */}
+      <Card>
+        <div className="p-5 border-b border-border flex items-center justify-between">
+          <h2 className="font-display font-semibold text-lg text-navy">Fixed Deposit Receipts</h2>
+          <Badge variant="outline" className="text-xs">{deposits.length} records</Badge>
+        </div>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30">
+                <TableHead className="text-[11px] uppercase tracking-wide">FDR Receipt No</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Deposit Scheme</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide text-right">Principal (BDT)</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide text-right">Expected Profit (BDT)</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Profit Rate</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Frequency</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Opening Date</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Maturity Date</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Status</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {deposits.map((d: any) => {
+                const matured = d.maturityDate < today;
+                const daysLeft = Math.ceil((new Date(d.maturityDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                return (
+                  <TableRow key={d.id} className="hover:bg-muted/20 cursor-pointer" onClick={() => navigate({ to: "/app/$", params: { _splat: `term-deposit/view/${d.id}` } })}>
+                    <TableCell className="font-mono font-bold text-navy text-sm">{d.receiptNo}</TableCell>
+                    <TableCell className="text-xs max-w-[180px]">{d.type}</TableCell>
+                    <TableCell className="text-right font-mono text-sm font-semibold">{d.principalAmount?.toLocaleString()}</TableCell>
+                    <TableCell className="text-right font-mono text-sm text-gold font-semibold">{(d.expectedProfit || 0).toLocaleString()}</TableCell>
+                    <TableCell className="text-sm font-mono">{d.profitRate}%</TableCell>
+                    <TableCell className="text-xs">{d.profitFrequency || "At Maturity"}</TableCell>
+                    <TableCell className="text-xs">{d.openingDate}</TableCell>
+                    <TableCell className="text-xs">
+                      <div>{d.maturityDate}</div>
+                      {!matured && daysLeft <= 90 && (
+                        <div className={`text-[10px] font-semibold ${daysLeft <= 30 ? "text-destructive" : "text-warning"}`}>{daysLeft}d remaining</div>
+                      )}
+                      {matured && <div className="text-[10px] text-muted-foreground">Matured</div>}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={d.status === "Approved" ? "default" : "secondary"} className="text-[10px]">{d.status}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button size="sm" variant="ghost" className="gap-1.5 text-navy hover:bg-navy/5" onClick={(e) => { e.stopPropagation(); navigate({ to: "/app/$", params: { _splat: `term-deposit/view/${d.id}` } }); }}>
+                        <Eye className="w-3.5 h-3.5" /> Statement
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function TermDepositStatementView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState("statement");
+  const [showDownloadDialog, setShowDownloadDialog] = useState(false);
+  const [downloadFormat, setDownloadFormat] = useState("PDF");
+  const [downloadPeriod, setDownloadPeriod] = useState("all");
+
+  const allTransactions = useMemo(() => getTDTransactions(record.receiptNo), [record.receiptNo]);
+
+  const profitSchedule = useMemo(() =>
+    getProfitSchedule(
+      record.receiptNo,
+      record.profitRate,
+      record.principalAmount,
+      record.openingDate,
+      record.maturityDate,
+      record.profitFrequency || "At Maturity"
+    ), [record]);
+
+  const filteredTxs = useMemo(() => {
+    if (downloadPeriod === "all") return allTransactions;
+    const now = new Date();
+    let boundary: Date;
+    if (downloadPeriod === "1year") {
+      boundary = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    } else {
+      boundary = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+    }
+    return allTransactions.filter(t => new Date(t.date) >= boundary);
+  }, [allTransactions, downloadPeriod]);
+
+  const totalProfitPaid = allTransactions.filter(t => t.type === "Profit Credit").reduce((s, t) => s + t.amount, 0);
+  const today = new Date().toISOString().slice(0, 10);
+  const matured = record.maturityDate < today;
+  const daysLeft = Math.ceil((new Date(record.maturityDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+
+  function handleDownloadTDStatement() {
+    if (downloadFormat === "PDF") {
+      downloadTDPDF(record, filteredTxs);
+    } else {
+      downloadTDCSV(record, filteredTxs);
+    }
+    toast.success(`TD Statement downloaded in ${downloadFormat} format!`);
+    setShowDownloadDialog(false);
+  }
+
+  const txTypeColor: Record<TDTransaction["type"], string> = {
+    "Principal Placed": "text-navy",
+    "Profit Credit": "text-success",
+    "Renewal": "text-gold",
+    "Partial Withdrawal": "text-destructive",
+    "Maturity Payout": "text-warning",
+  };
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "term-deposit" }} className="hover:text-navy">Term Deposits</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.receiptNo}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "term-deposit" } })}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-gold font-bold">{record.type}</div>
+            <h1 className="font-display text-3xl font-bold text-navy mt-0.5">{record.receiptNo}</h1>
+            <p className="text-xs font-mono text-muted-foreground mt-1">
+              {record.entity} · {record.branchName} · Linked: {record.linkedAccount}
+            </p>
+          </div>
+        </div>
+
+        {/* Download Dialog */}
+        <Dialog open={showDownloadDialog} onOpenChange={setShowDownloadDialog}>
+          <DialogTrigger asChild>
+            <Button className="bg-navy text-navy-foreground hover:bg-navy/90">
+              <Download className="w-4 h-4 mr-2" /> Download Statement
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Download TD Statement</DialogTitle>
+              <DialogDescription>
+                Generate a term deposit statement for <span className="font-mono font-bold">{record.receiptNo}</span>.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-3 text-sm">
+              <div className="space-y-2">
+                <Label htmlFor="td-period">Statement Period</Label>
+                <Select value={downloadPeriod} onValueChange={setDownloadPeriod}>
+                  <SelectTrigger id="td-period"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="6months">Last 6 Months</SelectItem>
+                    <SelectItem value="1year">Last 1 Year</SelectItem>
+                    <SelectItem value="all">Full Tenure (All Records)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="td-format">File Format</Label>
+                <Select value={downloadFormat} onValueChange={setDownloadFormat}>
+                  <SelectTrigger id="td-format"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PDF">
+                      <div className="flex items-center gap-2"><FileText className="w-3.5 h-3.5 text-destructive" /> PDF Statement (.txt)</div>
+                    </SelectItem>
+                    <SelectItem value="CSV">
+                      <div className="flex items-center gap-2"><FileSpreadsheet className="w-3.5 h-3.5 text-success" /> Excel / CSV Spreadsheet (.csv)</div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="p-3 rounded bg-muted/40 border text-[11px] text-muted-foreground leading-relaxed">
+                <strong>Note:</strong> TD Statements include FDR details, profit payment history, accrued amounts and auto-renewal instruction per BFIU e-reporting standards.
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowDownloadDialog(false)}>Cancel</Button>
+              <Button onClick={handleDownloadTDStatement} className="bg-navy text-navy-foreground hover:bg-navy/90">
+                <Download className="w-4 h-4 mr-2" />
+                {downloadFormat === "PDF" ? "Download PDF" : "Download Excel"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      {/* FDR Info Cards Row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className="p-5">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Principal Amount</div>
+          <div className="font-mono text-lg font-bold text-navy">BDT {record.principalAmount?.toLocaleString()}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{record.currency}</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Expected Profit</div>
+          <div className="font-mono text-lg font-bold text-gold">BDT {(record.expectedProfit || 0).toLocaleString()}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{record.profitRate}% p.a. · {record.profitFrequency}</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Maturity Date</div>
+          <div className="font-mono text-lg font-bold text-navy">{record.maturityDate}</div>
+          {!matured ? (
+            <div className={`text-[10px] font-semibold mt-1 ${daysLeft <= 30 ? "text-destructive" : daysLeft <= 90 ? "text-warning" : "text-success"}`}>{daysLeft} days remaining</div>
+          ) : (
+            <div className="text-[10px] text-muted-foreground mt-1">Matured — {record.autoRenewal}</div>
+          )}
+        </Card>
+        <Card className="p-5">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Profit Paid to Date</div>
+          <div className="font-mono text-lg font-bold text-success">BDT {totalProfitPaid.toLocaleString()}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Paid from {record.openingDate}</div>
+        </Card>
+      </div>
+
+      {/* FDR Details Card */}
+      <Card className="p-6">
+        <h2 className="font-display font-semibold text-base text-navy mb-4">FDR Account Details</h2>
+        <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-8 gap-y-4 text-xs">
+          {[
+            { label: "Receipt No", val: record.receiptNo },
+            { label: "Deposit Scheme", val: record.type },
+            { label: "Entity Name", val: record.entity },
+            { label: "Branch", val: record.branchName },
+            { label: "Opening Date", val: record.openingDate },
+            { label: "Maturity Date", val: record.maturityDate },
+            { label: "Tenure", val: `${record.tenureMonths} months` },
+            { label: "Principal", val: `BDT ${record.principalAmount?.toLocaleString()}` },
+            { label: "Profit Rate", val: `${record.profitRate}% p.a.` },
+            { label: "Profit Frequency", val: record.profitFrequency },
+            { label: "Auto Renewal", val: record.autoRenewal },
+            { label: "Linked Payout Account", val: record.linkedAccount },
+          ].map(({ label, val }) => (
+            <div key={label}>
+              <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</dt>
+              <dd className="mt-1 font-semibold text-sm">{val}</dd>
+            </div>
+          ))}
+          {record.remarks && (
+            <div className="col-span-2 sm:col-span-3 lg:col-span-4">
+              <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Remarks</dt>
+              <dd className="mt-1 font-semibold text-sm bg-muted/20 rounded p-2 border">{record.remarks}</dd>
+            </div>
+          )}
+        </dl>
+      </Card>
+
+      {/* Tabs: Statement Ledger | Profit Schedule */}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="statement" id="td-tab-statement">Statement Ledger</TabsTrigger>
+          <TabsTrigger value="schedule" id="td-tab-schedule">Profit Schedule</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="statement">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-semibold text-sm">Transaction Ledger — {record.receiptNo}</h2>
+              <Badge variant="outline">{allTransactions.length} entries</Badge>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/30">
+                    <TableHead className="text-[11px] uppercase tracking-wide">Date</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Transaction ID</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Type</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Narration</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide text-right">Amount (BDT)</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide text-right">Balance (BDT)</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Reference</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {allTransactions.map(t => (
+                    <TableRow key={t.id} className="hover:bg-muted/20 text-xs">
+                      <TableCell className="font-mono">{t.date}</TableCell>
+                      <TableCell className="font-mono text-navy font-semibold">{t.id}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={`text-[10px] font-semibold ${txTypeColor[t.type]} border-current`}>{t.type}</Badge>
+                      </TableCell>
+                      <TableCell className="max-w-[280px] leading-snug">{t.description}</TableCell>
+                      <TableCell className={`text-right font-mono font-semibold ${t.type === "Profit Credit" ? "text-success" : t.type === "Maturity Payout" ? "text-warning" : "text-navy"}`}>
+                        {t.type === "Principal Placed" ? "" : t.type === "Maturity Payout" ? "-" : "+"}{t.amount.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">{t.balanceAfter.toLocaleString()}</TableCell>
+                      <TableCell className="font-mono text-muted-foreground text-[11px]">{t.reference}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="schedule">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-semibold text-sm">Profit Payment Schedule — {record.receiptNo}</h2>
+              <Badge variant="outline">{profitSchedule.length} period{profitSchedule.length !== 1 ? "s" : ""}</Badge>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/30">
+                    <TableHead className="text-[11px] uppercase tracking-wide">Period</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Due Date</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide text-right">Profit Amount (BDT)</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Credit Account</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wide">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {profitSchedule.map((s, i) => (
+                    <TableRow key={i} className="hover:bg-muted/20 text-xs">
+                      <TableCell className="font-medium text-navy">{s.period}</TableCell>
+                      <TableCell className="font-mono">{s.dueDate}</TableCell>
+                      <TableCell className="text-right font-mono font-semibold text-gold">{s.profitAmount.toLocaleString()}</TableCell>
+                      <TableCell className="text-muted-foreground">{s.creditAccount}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={s.status === "Paid" ? "default" : "outline"}
+                          className={`text-[10px] ${
+                            s.status === "Paid" ? "bg-success/10 text-success border-success" :
+                            s.status === "Upcoming" ? "border-gold text-gold" :
+                            "border-muted-foreground text-muted-foreground"
+                          }`}
+                        >
+                          {s.status}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+/* ----------- TD Download Helpers ----------- */
+
+function downloadTDPDF(record: any, txs: TDTransaction[]) {
+  let text = `SHAHJALAL ISLAMI BANK PLC\nTERM DEPOSIT (FDR) STATEMENT\n`;
+  text += `========================================================================\n`;
+  text += `FDR Receipt No : ${record.receiptNo}\n`;
+  text += `Deposit Scheme  : ${record.type}\n`;
+  text += `Entity Name     : ${record.entity}\n`;
+  text += `Branch          : ${record.branchName}\n`;
+  text += `Principal Amount: BDT ${record.principalAmount?.toLocaleString()}\n`;
+  text += `Profit Rate     : ${record.profitRate}% p.a.\n`;
+  text += `Profit Frequency: ${record.profitFrequency}\n`;
+  text += `Opening Date    : ${record.openingDate}\n`;
+  text += `Maturity Date   : ${record.maturityDate}\n`;
+  text += `Linked Account  : ${record.linkedAccount}\n`;
+  text += `Auto Renewal    : ${record.autoRenewal}\n`;
+  text += `Statement Date  : ${new Date().toLocaleString()}\n`;
+  text += `========================================================================\n\n`;
+  text += `DATE        TXN ID           TYPE                 AMOUNT           BALANCE\n`;
+  text += `------------------------------------------------------------------------\n`;
+  txs.forEach(t => {
+    const amt = t.amount.toLocaleString().padStart(14);
+    const bal = t.balanceAfter.toLocaleString().padStart(14);
+    text += `${t.date}  ${t.id.padEnd(16)}  ${t.type.padEnd(20)}  ${amt}  ${bal}\n`;
+    text += `           ${t.description}\n`;
+    text += `           Ref: ${t.reference}\n\n`;
+  });
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `TD_Statement_${record.receiptNo}_${new Date().toISOString().slice(0, 10)}.txt`);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function downloadTDCSV(record: any, txs: TDTransaction[]) {
+  const headers = `FDR Receipt No,Deposit Scheme,Entity,Branch,Principal (BDT),Profit Rate,Opening Date,Maturity Date\n`;
+  const meta = `"${record.receiptNo}","${record.type}","${record.entity}","${record.branchName}",${record.principalAmount},${record.profitRate}%,"${record.openingDate}","${record.maturityDate}"\n\n`;
+  const txHeaders = `Date,Transaction ID,Type,Description,Amount (BDT),Running Balance (BDT),Reference\n`;
+  const txRows = txs.map(t =>
+    `"${t.date}","${t.id}","${t.type}","${t.description.replace(/"/g, '""')}",${t.amount},${t.balanceAfter},"${t.reference}"`
+  ).join("\n");
+  const blob = new Blob([headers + meta + txHeaders + txRows], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `TD_Statement_${record.receiptNo}_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/* ==================== FUND TRANSFER MODULE ==================== */
+
+const FT_STATUS_MAP: Record<string, string> = {
+  Completed: "border-success text-success bg-success/10",
+  Approved: "border-success text-success bg-success/10",
+  Pending: "border-warning text-warning bg-warning/10",
+  Processing: "border-blue-500 text-blue-600 bg-blue-50",
+  Scheduled: "border-purple-500 text-purple-600 bg-purple-50",
+  Rejected: "border-destructive text-destructive bg-destructive/10",
+};
+
+const FT_TYPE_ICONS: Record<string, React.ReactNode> = {
+  "Own Account": <ArrowRightLeft className="w-4 h-4" />,
+  "Within Bank": <Building2 className="w-4 h-4" />,
+  "EFTN": <Send className="w-4 h-4" />,
+  "RTGS": <RefreshCw className="w-4 h-4" />,
+  "NPSB": <Smartphone className="w-4 h-4" />,
+};
+
+function ftStatusBadge(s: string) {
+  const cls = FT_STATUS_MAP[s] || "border-muted-foreground text-muted-foreground";
+  return <Badge variant="outline" className={cls}>{s}</Badge>;
+}
+
+function downloadFTHistoryCSV(rows: FundTransferRecord[]) {
+  const headers = `Reference,Date,Transfer Type,From Account,Beneficiary,Beneficiary Bank,Beneficiary A/C,Amount (BDT),Currency,Purpose,Status\n`;
+  const dataRows = rows.map(r =>
+    `"${r.reference}","${r.date}","${r.transferType}","${r.fromAccount}","${r.beneficiary}","${r.beneficiaryBank}","${r.beneficiaryAccount}",${r.amount},"${r.currency}","${r.purpose}","${r.status}"`
+  ).join("\n");
+  const blob = new Blob([headers + dataRows], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `FundTransfer_History_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/* ---- Dashboard ---- */
+function FundTransferDashboardView() {
+  const navigate = useNavigate();
+  const allRecords = list("fund-transfer");
+  const historyData = getFundTransferHistory();
+  const [tab, setTab] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  // KPI aggregates
+  const completed = allRecords.filter(r => r.status === "Approved" || r.status === "Completed");
+  const pending = allRecords.filter(r => r.status === "Pending");
+  const scheduled = allRecords.filter(r => r.status === "Scheduled");
+  const rejected = allRecords.filter(r => r.status === "Rejected");
+  const totalMTD = completed.reduce((s, r) => s + Number(r.amount || 0), 0);
+
+  // Type breakdown for pie summary
+  const typeBreakdown = ["Own Account", "Within Bank", "EFTN", "RTGS", "NPSB"].map(type => ({
+    type,
+    count: allRecords.filter(r => r.transferType === type).length,
+    amount: allRecords.filter(r => r.transferType === type).reduce((s, r) => s + Number(r.amount || 0), 0),
+  }));
+
+  // Filtered history view
+  const filteredHistory = useMemo(() => {
+    let rows = historyData;
+    if (tab !== "all" && tab !== "scheduled") rows = rows.filter(r => r.transferType === tab);
+    if (tab === "scheduled") rows = rows.filter(r => r.status === "Scheduled");
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      rows = rows.filter(r =>
+        r.reference.toLowerCase().includes(q) ||
+        r.beneficiary.toLowerCase().includes(q) ||
+        r.beneficiaryBank.toLowerCase().includes(q) ||
+        r.beneficiaryAccount.includes(q) ||
+        r.purpose.toLowerCase().includes(q)
+      );
+    }
+    if (dateFrom) rows = rows.filter(r => r.date >= dateFrom);
+    if (dateTo) rows = rows.filter(r => r.date <= dateTo);
+    return rows;
+  }, [historyData, tab, searchQuery, dateFrom, dateTo]);
+
+  const quickActions = [
+    { label: "Own Account", icon: ArrowRightLeft, sub: "Between your accounts", color: "from-navy/80 to-navy", type: "own" },
+    { label: "Within Bank", icon: Building2, sub: "Other SJIBL account", color: "from-blue-700 to-blue-800", type: "within" },
+    { label: "EFTN", icon: Send, sub: "Interbank BEFTN", color: "from-indigo-600 to-indigo-700", type: "eftn" },
+    { label: "RTGS", icon: RefreshCw, sub: "High value RTGS", color: "from-violet-600 to-violet-700", type: "rtgs" },
+    { label: "NPSB", icon: Smartphone, sub: "National payment switch", color: "from-purple-600 to-purple-700", type: "npsb" },
+    { label: "Schedule", icon: AlarmClock, sub: "Future dated / recurring", color: "from-gold/80 to-amber-600", type: "schedule" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Breadcrumb */}
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground">Fund Transfer</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-lg navy-gradient text-navy-foreground grid place-items-center shrink-0">
+            <Send className="w-6 h-6 text-gold" />
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-gold">Transfers</div>
+            <h1 className="font-display text-3xl mt-0.5">Fund Transfer</h1>
+            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+              Initiate Own Account, Within Bank, EFTN, RTGS, or NPSB transfers with Maker-Checker approval.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" onClick={() => downloadFTHistoryCSV(filteredHistory)}>
+            <FileSpreadsheet className="w-4 h-4" /> Export CSV
+          </Button>
+          <Button
+            className="bg-navy text-navy-foreground hover:bg-navy/90"
+            onClick={() => navigate({ to: "/app/$", params: { _splat: "fund-transfer/new/own" } })}
+          >
+            <Plus className="w-4 h-4" /> New Transfer
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="p-5 border-l-4 border-l-success">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Total Transferred (MTD)</div>
+          <div className="font-display text-2xl mt-2 text-success">BDT {totalMTD.toLocaleString()}</div>
+          <div className="text-xs text-muted-foreground mt-1">{completed.length} transactions</div>
+        </Card>
+        <Card className="p-5 border-l-4 border-l-warning">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Pending Approval</div>
+          <div className={`font-display text-2xl mt-2 ${pending.length > 0 ? "text-warning" : ""}`}>{pending.length}</div>
+          <div className="text-xs text-muted-foreground mt-1">Awaiting checker action</div>
+        </Card>
+        <Card className="p-5 border-l-4 border-l-purple-500">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Scheduled</div>
+          <div className="font-display text-2xl mt-2 text-purple-600">{scheduled.length}</div>
+          <div className="text-xs text-muted-foreground mt-1">Future-dated transfers</div>
+        </Card>
+        <Card className="p-5 border-l-4 border-l-destructive">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Rejected</div>
+          <div className={`font-display text-2xl mt-2 ${rejected.length > 0 ? "text-destructive" : ""}`}>{rejected.length}</div>
+          <div className="text-xs text-muted-foreground mt-1">Requires resubmission</div>
+        </Card>
+      </div>
+
+      {/* Quick Action Buttons */}
+      <div>
+        <h2 className="font-display text-lg mb-3">Initiate Transfer</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {quickActions.map(qa => (
+            <button
+              key={qa.type}
+              onClick={() => navigate({ to: "/app/$", params: { _splat: `fund-transfer/new/${qa.type}` } })}
+              className={`flex flex-col items-center gap-2 p-4 rounded-xl bg-gradient-to-br ${qa.color} text-white hover:opacity-90 transition-all hover:scale-105 shadow-sm cursor-pointer`}
+            >
+              <div className="w-10 h-10 rounded-full bg-white/20 grid place-items-center">
+                <qa.icon className="w-5 h-5" />
+              </div>
+              <div className="text-sm font-semibold">{qa.label}</div>
+              <div className="text-xs opacity-80 text-center leading-tight">{qa.sub}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Transfer Type Breakdown */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        {typeBreakdown.map(tb => (
+          <Card key={tb.type} className="p-4 hover:border-gold/40 transition-colors cursor-pointer" onClick={() => setTab(tb.type.toLowerCase().replace(" ", "-"))}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-navy">{FT_TYPE_ICONS[tb.type]}</span>
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{tb.type}</span>
+            </div>
+            <div className="font-display text-xl">{tb.count}</div>
+            <div className="text-xs text-muted-foreground mt-1">BDT {(tb.amount / 1000).toFixed(0)}K</div>
+          </Card>
+        ))}
+      </div>
+
+      {/* History Table */}
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-border flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 text-navy">
+            <History className="w-4 h-4" />
+            <span className="font-semibold">Transfer History</span>
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search transfers…"
+                className="pl-8 h-8 w-48 text-sm"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <Input type="date" className="h-8 w-36 text-sm" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            <Input type="date" className="h-8 w-36 text-sm" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            <Button variant="outline" size="sm" onClick={() => downloadFTHistoryCSV(filteredHistory)}>
+              <FileSpreadsheet className="w-3.5 h-3.5" /> Excel
+            </Button>
+          </div>
+        </div>
+
+        <Tabs value={tab} onValueChange={setTab}>
+          <div className="px-4 pt-2 border-b border-border bg-muted/30">
+            <TabsList className="h-auto bg-transparent gap-0">
+              {[
+                { value: "all", label: "All" },
+                { value: "Own Account", label: "Own Account" },
+                { value: "Within Bank", label: "Within Bank" },
+                { value: "EFTN", label: "EFTN" },
+                { value: "RTGS", label: "RTGS" },
+                { value: "NPSB", label: "NPSB" },
+                { value: "scheduled", label: "Scheduled" },
+              ].map(t => (
+                <TabsTrigger
+                  key={t.value}
+                  value={t.value}
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-gold data-[state=active]:text-navy data-[state=active]:bg-transparent px-4 py-2 text-sm"
+                >
+                  {t.label}
+                  {t.value === "scheduled" && scheduled.length > 0 && (
+                    <span className="ml-1.5 bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5 rounded-full">{scheduled.length}</span>
+                  )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
+
+          <TabsContent value={tab} className="m-0">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/20">
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Beneficiary</TableHead>
+                  <TableHead>Bank</TableHead>
+                  <TableHead>Account</TableHead>
+                  <TableHead className="text-right">Amount (BDT)</TableHead>
+                  <TableHead>Purpose</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredHistory.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center text-sm text-muted-foreground py-10">
+                      No transfer records found.
+                    </TableCell>
+                  </TableRow>
+                ) : filteredHistory.map(r => (
+                  <TableRow key={r.id} className="hover:bg-muted/20">
+                    <TableCell className="font-mono text-xs text-gold font-semibold">{r.reference}</TableCell>
+                    <TableCell className="text-sm">{r.date}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-navy">{FT_TYPE_ICONS[r.transferType]}</span>
+                        <span className="text-sm">{r.transferType}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">{r.beneficiary}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{r.beneficiaryBank}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.beneficiaryAccount}</TableCell>
+                    <TableCell className="text-right font-mono text-sm font-semibold">{r.amount.toLocaleString()}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{r.purpose}</TableCell>
+                    <TableCell>{ftStatusBadge(r.status)}</TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" asChild>
+                        <Link to="/app/$" params={{ _splat: `fund-transfer/view/${r.id}` }}>
+                          <Eye className="w-3.5 h-3.5" /> View
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TabsContent>
+        </Tabs>
+
+        {/* Footer summary */}
+        <div className="p-3 border-t border-border bg-muted/10 flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">{filteredHistory.length} records shown</span>
+          <span className="text-xs font-semibold text-navy">
+            Total: BDT {filteredHistory.reduce((s, r) => s + r.amount, 0).toLocaleString()}
+          </span>
+        </div>
+      </Card>
+
+      {/* Shariah Note */}
+      <Card className="p-5 bg-gold/[0.06] border-gold/30">
+        <div className="flex items-start gap-3">
+          <Sparkles className="w-5 h-5 text-gold shrink-0 mt-0.5" />
+          <div>
+            <div className="font-medium">Shariah-Compliant Fund Transfer</div>
+            <p className="text-sm text-muted-foreground mt-1">
+              All fund transfers are subject to Maker-Checker approval workflow in accordance with SJIBL's dual-control policy.
+              RTGS and EFTN transactions follow Bangladesh Bank guidelines. No ribā-based instruments are processed.
+            </p>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ---- Transfer Form ---- */
+function FundTransferFormView({ transferType }: { transferType: string }) {
+  const navigate = useNavigate();
+  const typeMap: Record<string, string> = {
+    own: "Own Account", within: "Within Bank", eftn: "EFTN", rtgs: "RTGS", npsb: "NPSB", schedule: "EFTN"
+  };
+  const initialType = typeMap[transferType] || "EFTN";
+  const isSchedule = transferType === "schedule";
+
+  const [selectedType, setSelectedType] = useState(initialType);
+  const [fromAccount, setFromAccount] = useState(OWN_ACCOUNTS[0].id);
+  const [toAccount, setToAccount] = useState(OWN_ACCOUNTS[1].id); // for own account
+  const [beneficiary, setBeneficiary] = useState("");
+  const [beneficiaryAccount, setBeneficiaryAccount] = useState("");
+  const [beneficiaryBank, setBeneficiaryBank] = useState("");
+  const [beneficiaryBranch, setBeneficiaryBranch] = useState("");
+  const [routingNo, setRoutingNo] = useState("");
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("BDT");
+  const [purpose, setPurpose] = useState("");
+  const [narration, setNarration] = useState("");
+  const [remarks, setRemarks] = useState("");
+  const [scheduleEnabled, setScheduleEnabled] = useState(isSchedule);
+  const [scheduledDate, setScheduledDate] = useState("");
+  const [scheduledTime, setScheduledTime] = useState("10:00");
+  const [frequency, setFrequency] = useState("One-time");
+  const [step, setStep] = useState(1); // 1=form, 2=review, 3=submitted
+  const [submitting, setSubmitting] = useState(false);
+
+  const isOwnAccount = selectedType === "Own Account";
+  const isWithinBank = selectedType === "Within Bank";
+  const isInterBank = ["EFTN", "RTGS", "NPSB"].includes(selectedType);
+
+  const typeInfo: Record<string, { maxAmount: string; cutoff: string; settlement: string }> = {
+    "EFTN": { maxAmount: "No limit (under BDT 1 Cr)", cutoff: "Cut-off: 3:30 PM", settlement: "T+1 business day" },
+    "RTGS": { maxAmount: "Min BDT 1 Lac", cutoff: "Cut-off: 4:00 PM", settlement: "Real-time gross settlement" },
+    "NPSB": { maxAmount: "Max BDT 2 Lac per transaction", cutoff: "Cut-off: 24×7", settlement: "Near real-time" },
+    "Own Account": { maxAmount: "No limit", cutoff: "Available 24×7", settlement: "Immediate" },
+    "Within Bank": { maxAmount: "No limit", cutoff: "Available 24×7", settlement: "Immediate" },
+  };
+  const info = typeInfo[selectedType];
+
+  const fromAccObj = OWN_ACCOUNTS.find(a => a.id === fromAccount);
+  const toAccObj = OWN_ACCOUNTS.find(a => a.id === toAccount);
+
+  function handleSubmit() {
+    if (!amount || parseFloat(amount) <= 0) { toast.error("Please enter a valid amount."); return; }
+    if (isOwnAccount && fromAccount === toAccount) { toast.error("Source and destination accounts must be different."); return; }
+    if (!isOwnAccount && !beneficiary.trim()) { toast.error("Please enter beneficiary name."); return; }
+    if (!isOwnAccount && !beneficiaryAccount.trim()) { toast.error("Please enter beneficiary account number."); return; }
+    if (isInterBank && !beneficiaryBank) { toast.error("Please select the beneficiary bank."); return; }
+    if (!purpose) { toast.error("Please select a transfer purpose."); return; }
+    if (scheduleEnabled && !scheduledDate) { toast.error("Please select a scheduled date."); return; }
+    setStep(2);
+  }
+
+  function handleConfirm() {
+    setSubmitting(true);
+    setTimeout(() => {
+      const { create } = require("@/lib/moduleStore") as typeof import("@/lib/moduleStore");
+      const ref = `FT-${Date.now().toString().slice(-6)}`;
+      create("fund-transfer", {
+        reference: ref,
+        transferType: selectedType,
+        fromAccount: fromAccObj?.label || fromAccount,
+        toAccount: isOwnAccount ? (toAccObj?.label || toAccount) : "",
+        beneficiary: isOwnAccount ? (toAccObj?.label || `Own — ${toAccount}`) : beneficiary,
+        beneficiaryAccount: isOwnAccount ? toAccount : beneficiaryAccount,
+        beneficiaryBank: isOwnAccount ? "SJIBL" : (isWithinBank ? "SJIBL" : beneficiaryBank),
+        beneficiaryBranch,
+        routingNo,
+        amount: parseFloat(amount),
+        currency,
+        purpose,
+        narration,
+        remarks,
+        valueDate: scheduleEnabled ? scheduledDate : new Date().toISOString().slice(0, 10),
+        scheduledDate: scheduleEnabled ? scheduledDate : undefined,
+        scheduledTime: scheduleEnabled ? scheduledTime : undefined,
+        frequency: scheduleEnabled ? frequency : undefined,
+        status: scheduleEnabled ? "Scheduled" : "Pending",
+      });
+      setSubmitting(false);
+      setStep(3);
+    }, 1200);
+  }
+
+  if (step === 3) {
+    return (
+      <div className="space-y-6">
+        <nav className="text-xs text-muted-foreground flex items-center gap-1">
+          <Link to="/app" className="hover:text-navy">Dashboard</Link>
+          <ChevronRight className="w-3 h-3" />
+          <Link to="/app/$" params={{ _splat: "fund-transfer" }} className="hover:text-navy">Fund Transfer</Link>
+          <ChevronRight className="w-3 h-3" />
+          <span className="text-foreground">Transfer Submitted</span>
+        </nav>
+        <Card className="max-w-lg mx-auto p-10 text-center space-y-4">
+          <div className="w-16 h-16 rounded-full bg-success/15 grid place-items-center mx-auto">
+            <CheckCircle2 className="w-8 h-8 text-success" />
+          </div>
+          <h2 className="font-display text-2xl">Transfer Submitted</h2>
+          <p className="text-sm text-muted-foreground">
+            Your {selectedType} transfer of <span className="font-semibold text-foreground">BDT {parseFloat(amount).toLocaleString()}</span> has been submitted successfully.
+            {scheduleEnabled
+              ? ` It is scheduled for ${scheduledDate} at ${scheduledTime} (${frequency}).`
+              : " It is now pending Checker approval."}
+          </p>
+          <div className="flex justify-center gap-3 pt-2">
+            <Button variant="outline" onClick={() => navigate({ to: "/app/$", params: { _splat: "fund-transfer" } })}>
+              View History
+            </Button>
+            <Button className="bg-navy text-navy-foreground hover:bg-navy/90" onClick={() => navigate({ to: "/app/$", params: { _splat: "approval" } })}>
+              Go to Approvals
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (step === 2) {
+    return (
+      <div className="space-y-6">
+        <nav className="text-xs text-muted-foreground flex items-center gap-1">
+          <Link to="/app" className="hover:text-navy">Dashboard</Link>
+          <ChevronRight className="w-3 h-3" />
+          <Link to="/app/$" params={{ _splat: "fund-transfer" }} className="hover:text-navy">Fund Transfer</Link>
+          <ChevronRight className="w-3 h-3" />
+          <span className="text-foreground">Review & Confirm</span>
+        </nav>
+        <div className="flex items-start gap-4">
+          <Button variant="ghost" size="sm" onClick={() => setStep(1)}>
+            <ArrowLeft className="w-4 h-4" /> Back
+          </Button>
+          <div>
+            <h1 className="font-display text-2xl">Review Transfer</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">Please verify all details before confirming.</p>
+          </div>
+        </div>
+
+        <Card className="max-w-2xl divide-y divide-border">
+          <div className="p-4 bg-navy/5">
+            <div className="flex items-center gap-2">
+              <span className="text-navy">{FT_TYPE_ICONS[selectedType]}</span>
+              <span className="font-semibold">{selectedType} Transfer</span>
+              <Badge variant="outline" className="ml-auto border-warning text-warning">Pending Approval</Badge>
+            </div>
+          </div>
+          {[
+            { label: "From Account", value: fromAccObj?.label || fromAccount },
+            isOwnAccount
+              ? { label: "To Account", value: toAccObj?.label || toAccount }
+              : { label: "Beneficiary", value: beneficiary },
+            !isOwnAccount && { label: "Beneficiary Account", value: beneficiaryAccount },
+            !isOwnAccount && !isWithinBank && { label: "Beneficiary Bank", value: beneficiaryBank },
+            !isOwnAccount && beneficiaryBranch && { label: "Branch", value: beneficiaryBranch },
+            !isOwnAccount && routingNo && { label: "Routing No.", value: routingNo },
+            { label: "Amount", value: `${currency} ${parseFloat(amount).toLocaleString()}` },
+            { label: "Purpose", value: purpose },
+            narration && { label: "Narration", value: narration },
+            scheduleEnabled && { label: "Scheduled Date", value: scheduledDate },
+            scheduleEnabled && { label: "Scheduled Time", value: scheduledTime },
+            scheduleEnabled && { label: "Frequency", value: frequency },
+            remarks && { label: "Remarks", value: remarks },
+          ].filter(Boolean).map((row: any) => (
+            <div key={row.label} className="flex items-start gap-4 px-4 py-3">
+              <div className="w-44 text-sm text-muted-foreground shrink-0">{row.label}</div>
+              <div className="text-sm font-medium">{row.value}</div>
+            </div>
+          ))}
+        </Card>
+
+        <Card className="max-w-2xl p-4 bg-amber-50 border-amber-200">
+          <div className="flex items-start gap-2">
+            <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800">
+              This transfer will be submitted for Checker approval before processing. The Checker will receive an email notification.
+            </p>
+          </div>
+        </Card>
+
+        <div className="flex gap-3 max-w-2xl">
+          <Button variant="outline" className="flex-1" onClick={() => setStep(1)}>Edit Transfer</Button>
+          <Button
+            className="flex-1 bg-navy text-navy-foreground hover:bg-navy/90"
+            disabled={submitting}
+            onClick={handleConfirm}
+          >
+            {submitting ? <><RefreshCw className="w-4 h-4 animate-spin" /> Processing…</> : <><Check className="w-4 h-4" /> Confirm & Submit</>}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Step 1: Form
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "fund-transfer" }} className="hover:text-navy">Fund Transfer</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground">New Transfer</span>
+      </nav>
+
+      <div className="flex items-start gap-4">
+        <Button variant="ghost" size="sm" asChild>
+          <Link to="/app/$" params={{ _splat: "fund-transfer" }}><ArrowLeft className="w-4 h-4" /> Back</Link>
+        </Button>
+        <div>
+          <h1 className="font-display text-2xl">New Fund Transfer</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Fill in transfer details. All submissions go through Maker-Checker approval.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Main Form */}
+        <div className="lg:col-span-2 space-y-5">
+          {/* Transfer Type Selector */}
+          <Card className="p-5">
+            <h2 className="font-semibold mb-3 flex items-center gap-2"><ArrowRightLeft className="w-4 h-4 text-gold" /> Transfer Type</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {["Own Account", "Within Bank", "EFTN", "RTGS", "NPSB"].map(type => (
+                <button
+                  key={type}
+                  onClick={() => setSelectedType(type)}
+                  className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border-2 transition-all text-sm font-medium ${
+                    selectedType === type
+                      ? "border-gold bg-gold/10 text-navy"
+                      : "border-border text-muted-foreground hover:border-gold/50"
+                  }`}
+                >
+                  <span className={selectedType === type ? "text-navy" : "text-muted-foreground"}>
+                    {FT_TYPE_ICONS[type]}
+                  </span>
+                  {type}
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          {/* From / To Accounts */}
+          <Card className="p-5 space-y-4">
+            <h2 className="font-semibold flex items-center gap-2"><Wallet className="w-4 h-4 text-gold" /> Account Details</h2>
+
+            <div>
+              <Label className="text-sm mb-1.5 block">From Account *</Label>
+              <Select value={fromAccount} onValueChange={setFromAccount}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {OWN_ACCOUNTS.map(a => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.label} — Balance: {a.currency} {a.balance.toLocaleString()}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {isOwnAccount ? (
+              <div>
+                <Label className="text-sm mb-1.5 block">To Account *</Label>
+                <Select value={toAccount} onValueChange={setToAccount}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {OWN_ACCOUNTS.filter(a => a.id !== fromAccount).map(a => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.label} — Balance: {a.currency} {a.balance.toLocaleString()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm mb-1.5 block">Beneficiary Name *</Label>
+                  <Input placeholder="e.g. Globex Industries Ltd" value={beneficiary} onChange={e => setBeneficiary(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-sm mb-1.5 block">Beneficiary Account No. *</Label>
+                  <Input placeholder="Account number" value={beneficiaryAccount} onChange={e => setBeneficiaryAccount(e.target.value)} />
+                </div>
+                {isWithinBank ? (
+                  <div className="sm:col-span-2">
+                    <Label className="text-sm mb-1.5 block">Beneficiary Branch (SJIBL)</Label>
+                    <Input placeholder="e.g. Motijheel, Gulshan, Dhanmondi" value={beneficiaryBranch} onChange={e => setBeneficiaryBranch(e.target.value)} />
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <Label className="text-sm mb-1.5 block">Beneficiary Bank *</Label>
+                      <Select value={beneficiaryBank} onValueChange={setBeneficiaryBank}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select bank…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {BANGLADESH_BANKS.map(b => (
+                            <SelectItem key={b} value={b}>{b}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-sm mb-1.5 block">Branch</Label>
+                      <Input placeholder="Branch name" value={beneficiaryBranch} onChange={e => setBeneficiaryBranch(e.target.value)} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Label className="text-sm mb-1.5 block">Bank Routing No.</Label>
+                      <Input placeholder="9-digit routing number" value={routingNo} onChange={e => setRoutingNo(e.target.value)} />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* Amount & Purpose */}
+          <Card className="p-5 space-y-4">
+            <h2 className="font-semibold flex items-center gap-2"><DollarSign className="w-4 h-4 text-gold" /> Amount & Purpose</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="sm:col-span-2">
+                <Label className="text-sm mb-1.5 block">Transfer Amount *</Label>
+                <Input
+                  type="number"
+                  placeholder="0.00"
+                  min="1"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  className="text-lg font-mono"
+                />
+                {amount && !isNaN(parseFloat(amount)) && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {parseFloat(amount).toLocaleString("en-BD", { minimumFractionDigits: 2 })} {currency}
+                  </p>
+                )}
+              </div>
+              <div>
+                <Label className="text-sm mb-1.5 block">Currency</Label>
+                <Select value={currency} onValueChange={setCurrency}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="BDT">BDT — Taka</SelectItem>
+                    <SelectItem value="USD">USD — US Dollar</SelectItem>
+                    <SelectItem value="EUR">EUR — Euro</SelectItem>
+                    <SelectItem value="GBP">GBP — Pound</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="sm:col-span-3">
+                <Label className="text-sm mb-1.5 block">Purpose *</Label>
+                <Select value={purpose} onValueChange={setPurpose}>
+                  <SelectTrigger><SelectValue placeholder="Select purpose…" /></SelectTrigger>
+                  <SelectContent>
+                    {TRANSFER_PURPOSES.map(p => (
+                      <SelectItem key={p} value={p}>{p}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="sm:col-span-3">
+                <Label className="text-sm mb-1.5 block">Narration / Payment Details</Label>
+                <Input placeholder="Brief description for beneficiary's statement" value={narration} onChange={e => setNarration(e.target.value)} />
+              </div>
+              <div className="sm:col-span-3">
+                <Label className="text-sm mb-1.5 block">Internal Remarks (optional)</Label>
+                <Input placeholder="Notes for Checker (not visible to beneficiary)" value={remarks} onChange={e => setRemarks(e.target.value)} />
+              </div>
+            </div>
+          </Card>
+
+          {/* Schedule Options */}
+          <Card className="p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold flex items-center gap-2"><AlarmClock className="w-4 h-4 text-gold" /> Schedule Transfer</h2>
+              <button
+                onClick={() => setScheduleEnabled(!scheduleEnabled)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${scheduleEnabled ? "bg-navy" : "bg-muted-foreground/30"}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${scheduleEnabled ? "translate-x-5" : ""}`} />
+              </button>
+            </div>
+            {scheduleEnabled && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+                <div>
+                  <Label className="text-sm mb-1.5 block">Scheduled Date *</Label>
+                  <Input type="date" value={scheduledDate} onChange={e => setScheduledDate(e.target.value)} min={new Date().toISOString().slice(0, 10)} />
+                </div>
+                <div>
+                  <Label className="text-sm mb-1.5 block">Time</Label>
+                  <Input type="time" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-sm mb-1.5 block">Frequency</Label>
+                  <Select value={frequency} onValueChange={setFrequency}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="One-time">One-time</SelectItem>
+                      <SelectItem value="Daily">Daily</SelectItem>
+                      <SelectItem value="Weekly">Weekly</SelectItem>
+                      <SelectItem value="Fortnightly">Fortnightly</SelectItem>
+                      <SelectItem value="Monthly">Monthly</SelectItem>
+                      <SelectItem value="Quarterly">Quarterly</SelectItem>
+                      <SelectItem value="Annually">Annually</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+            {!scheduleEnabled && (
+              <p className="text-sm text-muted-foreground">Transfer will be processed on today's value date after Checker approval.</p>
+            )}
+          </Card>
+
+          {/* Submit */}
+          <div className="flex gap-3">
+            <Button variant="outline" className="flex-1" asChild>
+              <Link to="/app/$" params={{ _splat: "fund-transfer" }}>Cancel</Link>
+            </Button>
+            <Button className="flex-1 bg-navy text-navy-foreground hover:bg-navy/90" onClick={handleSubmit}>
+              <Send className="w-4 h-4" /> Review & Submit
+            </Button>
+          </div>
+        </div>
+
+        {/* Right Sidebar Info */}
+        <div className="space-y-4">
+          {/* Transfer type info card */}
+          <Card className="p-4 bg-navy/5 border-navy/20">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-navy">{FT_TYPE_ICONS[selectedType]}</span>
+              <span className="font-semibold text-navy">{selectedType}</span>
+            </div>
+            {info && (
+              <div className="space-y-2">
+                <div className="flex items-start gap-2">
+                  <DollarSign className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <span className="text-xs text-muted-foreground">{info.maxAmount}</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <span className="text-xs text-muted-foreground">{info.cutoff}</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <span className="text-xs text-muted-foreground">{info.settlement}</span>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* Approval workflow info */}
+          <Card className="p-4 border-gold/30 bg-gold/5">
+            <div className="text-xs font-semibold text-gold uppercase tracking-wide mb-3">Approval Workflow</div>
+            <div className="space-y-3">
+              {[
+                { step: 1, label: "Maker Submits", desc: "You initiate the transfer" },
+                { step: 2, label: "Checker Reviews", desc: "Authorised checker approves" },
+                { step: 3, label: "Bank Processes", desc: "Transfer sent to settlement" },
+              ].map(s => (
+                <div key={s.step} className="flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-gold/20 text-gold text-xs grid place-items-center font-bold shrink-0 mt-0.5">{s.step}</div>
+                  <div>
+                    <div className="text-xs font-medium">{s.label}</div>
+                    <div className="text-xs text-muted-foreground">{s.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Shariah note */}
+          <Card className="p-4 border-success/30 bg-success/5">
+            <div className="flex items-start gap-2">
+              <Sparkles className="w-4 h-4 text-success shrink-0 mt-0.5" />
+              <div>
+                <div className="text-xs font-semibold text-success mb-1">Shariah Notice</div>
+                <p className="text-xs text-muted-foreground">
+                  Fund transfers under SJIBL are processed on a fee-based (Ujrah) model. No ribā-based interest is charged on transactions.
+                </p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Transfer Detail View ---- */
+function FundTransferDetailView({ record }: { record: any }) {
+  const statusTimeline = [
+    { label: "Initiated", done: true, desc: `Submitted by ${record.maker || "Maker"}` },
+    { label: "Pending Approval", done: record.status !== "Pending", desc: "Awaiting Checker review" },
+    { label: "Processing", done: ["Approved", "Completed", "Scheduled"].includes(record.status), desc: "Sent to Bangladesh Bank settlement" },
+    { label: record.status === "Scheduled" ? "Scheduled" : "Completed", done: record.status === "Approved" || record.status === "Completed" || record.status === "Scheduled", desc: record.status === "Scheduled" ? `Scheduled: ${record.scheduledDate || "—"}` : "Transfer completed successfully" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "fund-transfer" }} className="hover:text-navy">Fund Transfer</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground">{record.reference || record.id}</span>
+      </nav>
+
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-start gap-4">
+          <Button variant="ghost" size="sm" asChild>
+            <Link to="/app/$" params={{ _splat: "fund-transfer" }}><ArrowLeft className="w-4 h-4" /> Back</Link>
+          </Button>
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-navy">{FT_TYPE_ICONS[record.transferType as string] || <Send className="w-4 h-4" />}</span>
+              <h1 className="font-display text-2xl">{record.transferType} Transfer</h1>
+              {ftStatusBadge(record.status)}
+            </div>
+            <p className="text-sm text-muted-foreground">Reference: <span className="font-mono font-semibold text-gold">{record.reference || record.id}</span></p>
+          </div>
+        </div>
+        <Button variant="outline" onClick={() => {
+          const data = [record as FundTransferRecord];
+          downloadFTHistoryCSV(data);
+        }}>
+          <FileSpreadsheet className="w-4 h-4" /> Export
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-5">
+          {/* Transfer Details Card */}
+          <Card className="divide-y divide-border">
+            <div className="p-4 bg-muted/20">
+              <span className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Transfer Details</span>
+            </div>
+            {[
+              { label: "Transfer Reference", value: record.reference || record.id, mono: true },
+              { label: "Transfer Type", value: record.transferType },
+              { label: "Value Date", value: record.valueDate || record.createdAt?.slice(0, 10) },
+              { label: "From Account", value: record.fromAccount },
+              record.transferType === "Own Account"
+                ? { label: "To Account", value: record.toAccount }
+                : { label: "Beneficiary Name", value: record.beneficiary },
+              { label: "Beneficiary Account", value: record.beneficiaryAccount, mono: true },
+              { label: "Beneficiary Bank", value: record.beneficiaryBank || "—" },
+              record.beneficiaryBranch && { label: "Beneficiary Branch", value: record.beneficiaryBranch },
+              record.routingNo && { label: "Bank Routing No.", value: record.routingNo, mono: true },
+              { label: "Currency", value: record.currency || "BDT" },
+              { label: "Amount", value: `${record.currency || "BDT"} ${Number(record.amount || 0).toLocaleString()}`, bold: true },
+              { label: "Purpose", value: record.purpose || "—" },
+              record.narration && { label: "Narration", value: record.narration },
+              record.remarks && { label: "Remarks", value: record.remarks },
+              record.scheduledDate && { label: "Scheduled Date", value: record.scheduledDate },
+              record.scheduledTime && { label: "Scheduled Time", value: record.scheduledTime },
+              record.frequency && { label: "Frequency", value: record.frequency },
+            ].filter(Boolean).map((row: any) => (
+              <div key={row.label} className="flex items-start gap-4 px-4 py-3">
+                <div className="w-44 text-sm text-muted-foreground shrink-0">{row.label}</div>
+                <div className={`text-sm flex-1 ${row.mono ? "font-mono" : ""} ${row.bold ? "font-bold text-navy text-base" : "font-medium"}`}>{row.value}</div>
+              </div>
+            ))}
+          </Card>
+
+          {/* Audit info */}
+          <Card className="divide-y divide-border">
+            <div className="p-4 bg-muted/20">
+              <span className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Audit Trail</span>
+            </div>
+            {[
+              { label: "Record ID", value: record.id, mono: true },
+              { label: "Created", value: record.createdAt ? new Date(record.createdAt).toLocaleString() : "—" },
+              { label: "Last Updated", value: record.updatedAt ? new Date(record.updatedAt).toLocaleString() : "—" },
+              { label: "Status", value: record.status },
+            ].map(row => (
+              <div key={row.label} className="flex items-start gap-4 px-4 py-3">
+                <div className="w-44 text-sm text-muted-foreground shrink-0">{row.label}</div>
+                <div className={`text-sm font-medium ${(row as any).mono ? "font-mono" : ""}`}>{row.value}</div>
+              </div>
+            ))}
+          </Card>
+        </div>
+
+        {/* Right: Status Timeline */}
+        <div className="space-y-4">
+          <Card className="p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-4">Transfer Status</div>
+            <div className="space-y-0">
+              {statusTimeline.map((s, i) => (
+                <div key={i} className="flex items-start gap-3">
+                  <div className="flex flex-col items-center">
+                    <div className={`w-6 h-6 rounded-full grid place-items-center shrink-0 ${
+                      record.status === "Rejected" && i === 1
+                        ? "bg-destructive text-white"
+                        : s.done ? "bg-success text-white" : "bg-muted border-2 border-border"
+                    }`}>
+                      {record.status === "Rejected" && i === 1 ? (
+                        <X className="w-3 h-3" />
+                      ) : s.done ? (
+                        <Check className="w-3 h-3" />
+                      ) : (
+                        <Clock className="w-3 h-3 text-muted-foreground" />
+                      )}
+                    </div>
+                    {i < statusTimeline.length - 1 && (
+                      <div className={`w-0.5 h-8 ${s.done ? "bg-success" : "bg-border"}`} />
+                    )}
+                  </div>
+                  <div className="pb-4">
+                    <div className={`text-sm font-medium ${s.done ? "text-foreground" : "text-muted-foreground"}`}>{s.label}</div>
+                    <div className="text-xs text-muted-foreground">{s.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Quick actions */}
+          <Card className="p-4 space-y-2">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Actions</div>
+            <Button variant="outline" className="w-full justify-start gap-2" asChild>
+              <Link to="/app/$" params={{ _splat: "approval" }}>
+                <CheckCircle2 className="w-4 h-4 text-gold" /> View Approval Queue
+              </Link>
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2"
+              onClick={() => navigate({ to: "/app/$", params: { _splat: `fund-transfer/new/${(record.transferType as string || "eftn").toLowerCase().replace(" ", "")}` } })}
+            >
+              <RefreshCw className="w-4 h-4 text-navy" /> Repeat Transfer
+            </Button>
+            <Button variant="outline" className="w-full justify-start gap-2" onClick={() => downloadFTHistoryCSV([record as FundTransferRecord])}>
+              <FileSpreadsheet className="w-4 h-4" /> Download Advice
+            </Button>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
