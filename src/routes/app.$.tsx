@@ -160,6 +160,28 @@ function ModuleRouter() {
     }
   }
 
+  if (slug === "export-lc") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <ExportLCDetailView record={record} />;
+    }
+    if (!action) {
+      return <ExportLCDashboardView />;
+    }
+  }
+
+  if (slug === "export-bill") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <ExportBillDetailView record={record} />;
+    }
+    if (!action) {
+      return <ExportBillDashboardView />;
+    }
+  }
+
   if (action === "new") {
     return <ModuleForm mod={mod} schema={schema} mode="create" />;
   }
@@ -6756,4 +6778,1673 @@ function ImportBillDetailView({ record }: { record: any }) {
   );
 }
 
+/* ==================== VIEW EXPORT LC MODULE ==================== */
 
+function ExportLCDashboardView() {
+  const navigate = useNavigate();
+  const records = list("export-lc");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const filtered = useMemo(() => {
+    let rows = [...records];
+
+    // Status filter
+    if (statusFilter !== "all") {
+      rows = rows.filter((r) =>
+        String(r.status || "").toLowerCase() === statusFilter.toLowerCase()
+      );
+    }
+
+    // Text search
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      rows = rows.filter((r) =>
+        Object.values(r).some((v) => String(v ?? "").toLowerCase().includes(q))
+      );
+    }
+
+    return rows;
+  }, [records, query, statusFilter]);
+
+  // Aggregates
+  const totalUSD = useMemo(() =>
+    records.filter((r) => r.currency === "USD").reduce((a, r) => a + Number(r.lcAmount || 0), 0),
+    [records]
+  );
+  
+  const activeCount = useMemo(() =>
+    records.filter((r) => r.status === "Approved").length,
+    [records]
+  );
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">View Export LC</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Trade Finance</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Export Letters of Credit</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Track export letters of credit advised through SJIBL, manage amendments, monitor presented export bills, and view pre/post-shipment export finance details.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => toast.success("Export LC PDF report generated.")}><FileText className="w-4 h-4" />Export PDF</Button>
+          <Button variant="outline" onClick={() => toast.success("Export LC Excel report generated.")}><Download className="w-4 h-4" />Export Excel</Button>
+        </div>
+      </div>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Total Advised LCs</div>
+          <div className="font-display text-3xl font-bold text-navy mt-2">{records.length}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{filtered.length} matching search</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Active Export Value</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">
+            USD {totalUSD.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Advised to local exporters</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Active LCs</div>
+          <div className="font-display text-3xl font-bold text-success mt-2">{activeCount}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Awaiting presentation / realization</div>
+        </Card>
+      </div>
+
+      {/* Search & Filters */}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="export-lc-search"
+              placeholder="Search LC No., Buyer, Issuing Bank…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40 text-xs" id="status-filter">
+              <SelectValue placeholder="LC Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="approved">Approved & Active</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+            </SelectContent>
+          </Select>
+          {(query || statusFilter !== "all") && (
+            <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setStatusFilter("all"); }}>
+              <X className="w-3.5 h-3.5" /> Clear
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      {/* LCs Table */}
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>LC Number</TableHead>
+              <TableHead>Buyer / Applicant</TableHead>
+              <TableHead>Issuing Bank</TableHead>
+              <TableHead>Advising Ref</TableHead>
+              <TableHead className="text-right">LC Amount</TableHead>
+              <TableHead>Opening Date</TableHead>
+              <TableHead>Expiry Date</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-12">
+                  No Export LCs found matching search criteria.
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtered.map((r) => (
+                <TableRow key={r.id} className="hover:bg-muted/30 cursor-pointer" onClick={() => navigate({ to: "/app/$", params: { _splat: `export-lc/view/${r.id}` } })}>
+                  <TableCell className="font-mono text-sm font-semibold text-navy">
+                    {String(r.lcNumber)}
+                  </TableCell>
+                  <TableCell className="text-sm font-medium">{String(r.applicantName)}</TableCell>
+                  <TableCell className="text-sm">{String(r.issuingBank)}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{String(r.advisingRef || "—")}</TableCell>
+                  <TableCell className="text-right font-mono font-semibold">
+                    {String(r.currency)} {Number(r.lcAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{String(r.openingDate)}</TableCell>
+                  <TableCell className="text-xs">{String(r.expiryDate)}</TableCell>
+                  <TableCell>{statusBadge(String(r.status))}</TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="sm" asChild onClick={(e) => e.stopPropagation()}>
+                      <Link to="/app/$" params={{ _splat: `export-lc/view/${r.id}` }}>
+                        <Eye className="w-3.5 h-3.5" /> View Details
+                      </Link>
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
+
+/* ---- Mock data helpers for Export LC Detail View ---- */
+
+function getExportAmendments(lcNumber: string) {
+  return [
+    {
+      id: "AMDE-001",
+      amendmentNo: "01",
+      date: "2025-05-10",
+      description: "Increase in LC value by USD 50,000. Total value amended to USD 900,000.",
+      swiftRef: "MT707-00911",
+      status: "Approved",
+    },
+    {
+      id: "AMDE-002",
+      amendmentNo: "02",
+      date: "2025-05-28",
+      description: "Extension of latest shipment date to 2025-06-30 and expiry date to 2025-07-31.",
+      swiftRef: "MT707-00944",
+      status: "Approved",
+    }
+  ];
+}
+
+function getExportSwiftMessages(lcNumber: string) {
+  return [
+    {
+      id: "SWE-001", msgType: "MT710", date: "2025-04-15 09:30:00",
+      subject: "Advice of Third Bank's Documentary Credit",
+      from: "WELSUS6NYXXX (Wells Fargo Bank NA, NY)",
+      to: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      status: "Received", body: "Sender Ref: 2025-WF-88912 | Receiver Ref: ADV-88291 | Beneficiary: Globex Industries Ltd | Applicant: Walmart Inc | Amount: USD 850,000.00",
+    },
+    {
+      id: "SWE-002", msgType: "MT707", date: "2025-05-10 14:20:00",
+      subject: "Amendment to Documentary Credit",
+      from: "WELSUS6NYXXX (Wells Fargo Bank NA, NY)",
+      to: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      status: "Received", body: "Amendment No: 01 | Increase in LC Amount: USD 50,000.00 | New LC Value: USD 900,000.00",
+    },
+    {
+      id: "SWE-003", msgType: "MT754", date: "2025-06-10 16:45:00",
+      subject: "Advice of Payment/Acceptance/Negotiation",
+      from: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      to: "WELSUS6NYXXX (Wells Fargo Bank NA, NY)",
+      status: "Sent", body: "We have negotiated export documents and claimed USD 350,000 under your credit reference 2025-WF-88912.",
+    }
+  ];
+}
+
+/* ---- ExportLCDetailView ---- */
+
+function ExportLCDetailView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("summary");
+
+  // Fetch linked export bills
+  const linkedBills = useMemo(() => {
+    const bills = list("export-bill");
+    return bills.filter((b) => String(b.lcNumber) === String(record.lcNumber));
+  }, [record.lcNumber]);
+
+  const amendments = useMemo(() => getExportAmendments(String(record.lcNumber)), [record.lcNumber]);
+  const swiftMessages = useMemo(() => getExportSwiftMessages(String(record.lcNumber)), [record.lcNumber]);
+
+  const now = new Date();
+  const expiry = new Date(String(record.expiryDate));
+  const daysToExpiry = Math.ceil((expiry.getTime() - now.getTime()) / 86400000);
+  const isExpired = daysToExpiry < 0;
+
+  const fieldRow = (label: string, value: string | undefined, mono = false) => (
+    <div className="flex justify-between items-start gap-4 py-2 border-b border-border last:border-0">
+      <span className="text-xs text-muted-foreground shrink-0 min-w-[140px]">{label}</span>
+      <span className={`text-sm font-medium text-right ${mono ? "font-mono" : ""}`}>{value || "—"}</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Breadcrumb */}
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "export-lc" }} className="hover:text-navy">Export LC</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.lcNumber}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "export-lc" } })}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="text-xs uppercase tracking-widest text-gold font-bold">Export LC</div>
+              {statusBadge(String(record.status))}
+              {isExpired && <Badge variant="outline" className="text-destructive border-destructive text-[10px]">EXPIRED</Badge>}
+            </div>
+            <h1 className="font-display text-2xl font-bold text-navy mt-0.5">{record.lcNumber}</h1>
+            <p className="text-xs text-muted-foreground mt-1 font-mono">
+              Advising Ref: {record.advisingRef || "—"} · Advising Date: {record.openingDate}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" onClick={() => toast.success("Export LC Summary PDF exported.")}>
+            <FileText className="w-4 h-4" /> Download Advising Letter
+          </Button>
+        </div>
+      </div>
+
+      {/* Key Metric Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">LC Amount</div>
+          <div className="font-mono font-bold text-lg text-navy mt-1">
+            {record.currency} {Number(record.lcAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Buyer / Applicant</div>
+          <div className="font-semibold text-sm mt-1 truncate">{record.applicantName}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Expiry Date</div>
+          <div className={`font-semibold text-sm mt-1 ${isExpired ? "text-destructive" : "text-navy"}`}>
+            {String(record.expiryDate)}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Presented Export Bills</div>
+          <div className="font-bold text-2xl text-navy mt-1">{linkedBills.length}</div>
+        </Card>
+      </div>
+
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <div className="overflow-x-auto">
+          <TabsList className="min-w-max">
+            <TabsTrigger value="summary" id="tab-ex-summary">Export LC Summary</TabsTrigger>
+            <TabsTrigger value="details" id="tab-ex-lc">LC Details</TabsTrigger>
+            <TabsTrigger value="amendment" id="tab-ex-amd">
+              Amendment {amendments.length > 0 && <Badge className="ml-1 h-4 text-[10px] px-1 bg-navy text-white">{amendments.length}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="bills" id="tab-ex-bills">
+              Bills {linkedBills.length > 0 && <Badge className="ml-1 h-4 text-[10px] px-1 bg-navy text-white">{linkedBills.length}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="guarantee" id="tab-ex-guar">Guarantee</TabsTrigger>
+            <TabsTrigger value="swift" id="tab-ex-swift">SWIFT Message</TabsTrigger>
+            <TabsTrigger value="investment" id="tab-ex-inv">Investment (Credit)</TabsTrigger>
+          </TabsList>
+        </div>
+
+        {/* ── TAB 1: Export LC Summary ── */}
+        <TabsContent value="summary" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">LC Overview</h2>
+              {fieldRow("LC Number", String(record.lcNumber), true)}
+              {fieldRow("Buyer / Applicant", String(record.applicantName))}
+              {fieldRow("LC Amount", `${record.currency} ${Number(record.lcAmount).toLocaleString("en-US", { minimumFractionDigits: 2 })}`, true)}
+              {fieldRow("Advising Reference", String(record.advisingRef || "—"), true)}
+              {fieldRow("Advising Date", String(record.openingDate))}
+              {fieldRow("Expiry Date", String(record.expiryDate))}
+              {fieldRow("Latest Shipment", String(record.shipmentDate || "—"))}
+            </Card>
+
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Advising & Issuing Bank</h2>
+              {fieldRow("Issuing Bank", String(record.issuingBank))}
+              {fieldRow("Issuing Bank SWIFT", "WELSUS6NYXXX (Wells Fargo Bank NA, NY)")}
+              {fieldRow("Advising Bank", "Shahjalal Islami Bank PLC")}
+              {fieldRow("Advising Branch", "Dilkusha Corporate Branch")}
+              {fieldRow("Exporter / Beneficiary", "Globex Industries Ltd")}
+              {fieldRow("Exporter Account", "0123100001 — Al-Wadeeah Current")}
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 2: LC Details (General, Shipment, Documents) ── */}
+        <TabsContent value="details" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* General details */}
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">General Terms</h2>
+              {fieldRow("LC Rules", "UCP LATEST VERSION (UCP 600)")}
+              {fieldRow("Transferable Status", "Irrevocable & Non-Transferable")}
+              {fieldRow("Partial Shipment", "Allowed")}
+              {fieldRow("Transshipment", "Allowed")}
+              {fieldRow("Tolerance (%)", "5% / -5%")}
+              {fieldRow("Mode of Payment", "Negotiation at 60 Days Usance")}
+            </Card>
+
+            {/* Shipment details */}
+            <Card className="p-6 space-y-3">
+              <h2 className="font-display text-lg font-bold text-navy mb-2">Shipment details</h2>
+              {fieldRow("Latest Shipment Date", String(record.shipmentDate || "—"))}
+              {fieldRow("Port of Loading", "Chittagong Port, Bangladesh")}
+              {fieldRow("Port of Discharge", "Port of New York / Newark, USA")}
+              {fieldRow("Incoterms", "FOB Chittagong")}
+              <div className="pt-2">
+                <span className="text-xs text-muted-foreground block mb-1">Description of Goods</span>
+                <div className="p-3 bg-muted/40 rounded-md text-sm">{String(record.goodsDescription || "—")}</div>
+              </div>
+            </Card>
+
+            {/* Documents Required */}
+            <Card className="p-6 lg:col-span-2 space-y-3">
+              <h2 className="font-display text-lg font-bold text-navy mb-2">Documents Required for Bill Presentation</h2>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                To realize funds from the issuing bank, exporters must present compliance records verifying shipment details:
+              </p>
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm pt-2">
+                {[
+                  "Signed Commercial Invoice (Original + 3 copies) indicating FOB values",
+                  "Full set of Clean On-Board Ocean Bills of Lading made out to the order of Wells Fargo Bank",
+                  "Packing List detailing exact weights, cartons, and dimensions",
+                  "Certificate of Origin issued by Chamber of Commerce, Bangladesh",
+                  "GSP Certificate of Origin Form A",
+                  "Beneficiary's certificate confirming shipment samples dispatched to applicant",
+                ].map((doc, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-success shrink-0 mt-0.5" />
+                    <span>{doc}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 3: Amendment ── */}
+        <TabsContent value="amendment" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">Amendment History</h2>
+              <Badge variant="outline">{amendments.length} Amendments</Badge>
+            </div>
+            {amendments.length === 0 ? (
+              <div className="p-10 text-center text-sm text-muted-foreground">No amendments advised for this credit.</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {amendments.map((amd) => (
+                  <div key={amd.id} className="p-5 space-y-2">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-navy text-sm">AMD-{amd.amendmentNo}</span>
+                          <Badge variant="outline" className="text-[10px] text-success border-success">{amd.status}</Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Advised on: {amd.date} · SWIFT Reference: {amd.swiftRef}
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-sm text-foreground bg-muted/40 rounded-md p-3">{amd.description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+
+        {/* ── TAB 4: Bills ── */}
+        <TabsContent value="bills" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">Presented Export Bills</h2>
+              <Badge variant="outline">{linkedBills.length} Bill Presented</Badge>
+            </div>
+            {linkedBills.length === 0 ? (
+              <div className="p-10 text-center text-sm text-muted-foreground">
+                No export bills have been negotiated or presented under this credit.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Bill Reference</TableHead>
+                    <TableHead className="text-right">Presented Amount</TableHead>
+                    <TableHead className="text-right">Negotiated Amount</TableHead>
+                    <TableHead className="text-right">Realized Amount</TableHead>
+                    <TableHead>Realization Date</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {linkedBills.map((b) => (
+                    <TableRow key={b.id}>
+                      <TableCell className="font-mono text-sm font-semibold">{String(b.billNumber)}</TableCell>
+                      <TableCell className="text-right font-mono font-semibold">
+                        {String(b.currency)} {Number(b.billAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-navy">
+                        {b.negotiatedAmount ? `${String(b.currency)} ${Number(b.negotiatedAmount).toLocaleString()}` : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-success">
+                        {b.realizedAmount ? `${String(b.currency)} ${Number(b.realizedAmount).toLocaleString()}` : "—"}
+                      </TableCell>
+                      <TableCell className="text-xs">{String(b.realizationDate || "Pending")}</TableCell>
+                      <TableCell>{statusBadge(String(b.status))}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link to="/app/$" params={{ _splat: `export-bill/view/${b.id}` }}>
+                            <Eye className="w-3.5 h-3.5" /> View Bill
+                          </Link>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </Card>
+
+          {/* Export LC utilization aggregates */}
+          {linkedBills.length > 0 && (
+            <Card className="p-5 mt-4">
+              <h3 className="font-semibold text-sm mb-3">Export LC Utilization summary</h3>
+              <div className="grid grid-cols-3 gap-4 text-center text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground">LC Amount Limit</div>
+                  <div className="font-mono font-bold text-navy">
+                    {record.currency} {Number(record.lcAmount).toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Presented Bills</div>
+                  <div className="font-mono font-bold text-foreground">
+                    {record.currency}{" "}
+                    {linkedBills.reduce((a, b) => a + Number(b.billAmount || 0), 0).toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Remaining Balance</div>
+                  <div className="font-mono font-bold text-success">
+                    {record.currency}{" "}
+                    {(Number(record.lcAmount) - linkedBills.reduce((a, b) => a + Number(b.billAmount || 0), 0)).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ── TAB 5: Guarantee ── */}
+        <TabsContent value="guarantee" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Advising & Backing Guarantee</h2>
+              {fieldRow("Confirmation Status", "Wells Fargo Bank NA Confirmed Credit")}
+              {fieldRow("Confirmation Reference", "WFC-CO-2025-0012")}
+              {fieldRow("Confirming Bank Amount", `${record.currency} ${Number(record.lcAmount).toLocaleString("en-US")}`, true)}
+              {fieldRow("SBLC / Standing Credit Backing", "Wells Fargo Bank corporate backing")}
+              {fieldRow("Guarantee Issue Date", String(record.openingDate))}
+              {fieldRow("Guarantee Expiry", String(record.expiryDate))}
+            </Card>
+
+            <Card className="p-6">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Advising & Confirmation Fees</h2>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">LC Advising Commission</span>
+                  <span className="font-mono font-semibold">BDT 1,500.00</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">Confirmation Fee (0.2% per quarter)</span>
+                  <span className="font-mono font-semibold">{record.currency} {(Number(record.lcAmount) * 0.002).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">Courier and SWIFT advising fees</span>
+                  <span className="font-mono font-semibold">BDT 2,200.00</span>
+                </div>
+                <div className="flex justify-between pt-1 font-bold">
+                  <span>Total Advising Charges Debited</span>
+                  <span className="font-mono text-navy">BDT 3,700.00 + USD {(Number(record.lcAmount) * 0.002).toLocaleString()}</span>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 6: SWIFT Message ── */}
+        <TabsContent value="swift" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">SWIFT Advices Log</h2>
+              <Badge variant="outline">{swiftMessages.length} Messages</Badge>
+            </div>
+            <div className="divide-y divide-border">
+              {swiftMessages.map((msg) => (
+                <div key={msg.id} className="p-5 space-y-3">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge className="bg-blue-100 text-blue-700 border border-blue-300 text-[10px] font-bold px-2 py-0.5">
+                        {msg.msgType}
+                      </Badge>
+                      <span className="font-semibold text-sm">{msg.subject}</span>
+                      <Badge variant="outline" className="text-[10px] text-success border-success">
+                        {msg.status}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono">{msg.date}</div>
+                  </div>
+                  <div className="text-xs space-y-1 text-muted-foreground">
+                    <div><span className="font-semibold text-foreground">From:</span> {msg.from}</div>
+                    <div><span className="font-semibold text-foreground">To:</span> {msg.to}</div>
+                  </div>
+                  <div className="bg-muted/40 rounded-md p-3 font-mono text-xs text-muted-foreground whitespace-pre-line leading-relaxed">
+                    {msg.body}
+                  </div>
+                  <div className="flex justify-end pt-1">
+                    <Button variant="ghost" size="sm" className="text-xs gap-1.5" onClick={() => toast.success(`Export LC SWIFT ${msg.msgType} message downloaded.`)}>
+                      <Download className="w-3.5 h-3.5" /> Download SWIFT Body
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* ── TAB 7: Investment (Finance / Credit) ── */}
+        <TabsContent value="investment" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card className="p-6 lg:col-span-2 space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <h2 className="font-display text-lg font-bold text-navy">Export Financing & Credit Facilities</h2>
+                <Badge className="bg-navy text-gold font-bold">Pre & Post Shipment Finance</Badge>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                  <div className="text-xs text-muted-foreground">Pre-Shipment Finance Instrument</div>
+                  <div className="font-semibold text-sm">Export Packing Credit (PC) / Bai-Murabaha PC</div>
+                </div>
+                <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                  <div className="text-xs text-muted-foreground">Post-Shipment Finance Instrument</div>
+                  <div className="font-semibold text-sm">FDBP (Foreign Document Bill Purchase) Negotiation</div>
+                </div>
+                <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                  <div className="text-xs text-muted-foreground">PC Financed Limit (up to 70% of LC)</div>
+                  <div className="font-mono font-bold text-navy text-base">
+                    USD {Number(record.lcAmount * 0.7).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                  </div>
+                </div>
+                <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                  <div className="text-xs text-muted-foreground">Export Credit Profit Rate</div>
+                  <div className="font-semibold text-sm">7.50% per annum (Concessionary Exporter Rate)</div>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <h3 className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">Export Credit Active Financing Accounts</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Facility Account</TableHead>
+                      <TableHead>Disbursed Finance</TableHead>
+                      <TableHead>Profit Rate</TableHead>
+                      <TableHead>Value Date</TableHead>
+                      <TableHead>Maturity Date</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell className="font-medium text-xs">A/C 0123-PC-10022 (Packing Credit)</TableCell>
+                      <TableCell className="font-mono text-xs">USD 150,000</TableCell>
+                      <TableCell className="text-xs">7.50% p.a.</TableCell>
+                      <TableCell className="text-xs">2025-04-20</TableCell>
+                      <TableCell className="text-xs">2025-07-20</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px] text-success border-success bg-success/5">Active</Badge></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="font-medium text-xs">A/C 0123-FDBP-44211 (Bill Purchase)</TableCell>
+                      <TableCell className="font-mono text-xs">USD 340,000</TableCell>
+                      <TableCell className="text-xs">7.50% p.a.</TableCell>
+                      <TableCell className="text-xs">2025-06-10</TableCell>
+                      <TableCell className="text-xs">2025-08-10</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px] text-success border-success bg-success/5">Active</Badge></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            </Card>
+
+            <Card className="p-6 space-y-4">
+              <h2 className="font-display text-sm font-bold text-navy">Export Credit Facilities Ledger</h2>
+              <div className="space-y-4 text-xs">
+                <div>
+                  <span className="text-muted-foreground block mb-0.5">Approved Exporter Credit Limit</span>
+                  <div className="font-mono font-bold text-sm text-navy">BDT 300,000,000</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block mb-0.5">Outstanding Balance</span>
+                  <div className="font-mono font-bold text-sm text-amber-600">BDT 182,400,000</div>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block mb-0.5">Available Headroom</span>
+                  <div className="font-mono font-bold text-sm text-success">BDT 117,600,000</div>
+                </div>
+                
+                <div className="border-t pt-4 space-y-2">
+                  <Button className="w-full bg-gold text-gold-foreground hover:bg-gold/90 gap-1.5" onClick={() => toast.success("Packing Credit request form loaded.")}>
+                    <Coins className="w-3.5 h-3.5" /> Request Packing Credit (PC)
+                  </Button>
+                  <Button variant="outline" className="w-full gap-1.5" onClick={() => toast.success("Bill Purchase Negotiation submission opened.")}>
+                    <TrendingUp className="w-3.5 h-3.5" /> Negotiate Export Bill (FDBP)
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// EXPORT BILL MODULE
+// ═══════════════════════════════════════════════════════════════════
+
+const EXPORT_BILL_MOCK: Array<Record<string, unknown>> = [
+  {
+    id: "EXPB-001",
+    billNumber: "EXPB-2025-001",
+    lcNumber: "LC-2025-EXP-001",
+    beneficiary: "Dhaka Garments Ltd.",
+    issuingBank: "Al-Amanah Bank, Dubai",
+    currency: "USD",
+    billAmount: 485000,
+    lcAmount: 500000,
+    billDate: "2025-05-10",
+    maturityDate: "2025-08-10",
+    status: "Accepted",
+    discrepancyStatus: "Clean",
+    paymentTerms: "90 Days Usance",
+    shipmentPort: "Chittagong, Bangladesh",
+    destinationPort: "Jebel Ali, UAE",
+    commodity: "Ready Made Garments (RMG)",
+  },
+  {
+    id: "EXPB-002",
+    billNumber: "EXPB-2025-002",
+    lcNumber: "LC-2025-EXP-002",
+    beneficiary: "Chittagong Textiles Co.",
+    issuingBank: "Emirates Islamic Bank, Abu Dhabi",
+    currency: "EUR",
+    billAmount: 210000,
+    lcAmount: 225000,
+    billDate: "2025-06-01",
+    maturityDate: "2025-09-01",
+    status: "Pending",
+    discrepancyStatus: "Minor Discrepancy",
+    paymentTerms: "60 Days Usance",
+    shipmentPort: "Mongla, Bangladesh",
+    destinationPort: "Rotterdam, Netherlands",
+    commodity: "Frozen Fish Products",
+  },
+  {
+    id: "EXPB-003",
+    billNumber: "EXPB-2025-003",
+    lcNumber: "LC-2025-EXP-003",
+    beneficiary: "Apex Footwear Ltd.",
+    issuingBank: "Kuwait Finance House, Kuwait",
+    currency: "USD",
+    billAmount: 320000,
+    lcAmount: 340000,
+    billDate: "2025-04-15",
+    maturityDate: "2025-07-15",
+    status: "Settled",
+    discrepancyStatus: "Clean",
+    paymentTerms: "Sight",
+    shipmentPort: "Chittagong, Bangladesh",
+    destinationPort: "Kuwait City, Kuwait",
+    commodity: "Footwear & Leather Goods",
+  },
+  {
+    id: "EXPB-004",
+    billNumber: "EXPB-2025-004",
+    lcNumber: "LC-2025-EXP-004",
+    beneficiary: "Square Pharmaceuticals Ltd.",
+    issuingBank: "Qatar Islamic Bank, Doha",
+    currency: "USD",
+    billAmount: 95000,
+    lcAmount: 100000,
+    billDate: "2025-06-12",
+    maturityDate: "2025-09-12",
+    status: "Pending",
+    discrepancyStatus: "Major Discrepancy",
+    paymentTerms: "90 Days Usance",
+    shipmentPort: "Chittagong, Bangladesh",
+    destinationPort: "Doha, Qatar",
+    commodity: "Pharmaceutical Products",
+  },
+];
+
+function getExportBillSwiftMessages(billNumber: string) {
+  return [
+    {
+      id: "sw-eb-1",
+      msgType: "MT754",
+      direction: "Received",
+      from: "AIBKAEADDXXX (Al-Amanah Bank, Dubai)",
+      date: "2025-05-12",
+      subject: `Payment Advice under LC — ${billNumber}`,
+      status: "Processed",
+      body: `MT754 PAYMENT ADVICE\n:20:${billNumber}\n:21:LC-2025-EXP-001\n:32B:USD485000,00\n:53B:/AE123456789012345678901234\nAL-AMANAH BANK, DUBAI\n:57A:SJIBLBDDH\n:58A:SJIBLBDDH\n:70:PAYMENT UNDER DOC PRESENTATION\n:71A:OUR`,
+    },
+    {
+      id: "sw-eb-2",
+      msgType: "MT742",
+      direction: "Sent",
+      from: "SJIBLBDDH (SJIBL, Dhaka)",
+      date: "2025-05-11",
+      subject: `Reimbursement Claim — ${billNumber}`,
+      status: "Acknowledged",
+      body: `MT742 REIMBURSEMENT CLAIM\n:20:${billNumber}\n:21:LC-2025-EXP-001\n:32B:USD485000,00\n:53A:SJIBLBDDH\n:54A:AIBKAEADDXXX\n:57A:CBKUKWKW\n:72:/REC/EXPORT BILL NEGOTIATION\nFDBP FINANCED`,
+    },
+    {
+      id: "sw-eb-3",
+      msgType: "MT799",
+      direction: "Received",
+      from: "AIBKAEADDXXX (Al-Amanah Bank, Dubai)",
+      date: "2025-05-13",
+      subject: `Free Format — Discrepancy Waiver`,
+      status: "Processed",
+      body: `MT799 FREE FORMAT MESSAGE\n:20:${billNumber}\n:21:LC-2025-EXP-001\n:79:WE CONFIRM APPLICANT HAS ACCEPTED\nDOCUMENTS UNDER RESERVE AND WAIVED\nALL DISCREPANCIES. PLEASE RELEASE\nPAYMENT AS PER NORMAL.`,
+    },
+  ];
+}
+
+function getExportBillAdviceMessages(billNumber: string) {
+  return [
+    {
+      id: "adv-eb-1",
+      type: "Negotiation Advice",
+      date: "2025-05-11",
+      to: "Dhaka Garments Ltd. (Exporter)",
+      channel: "E-mail / Portal",
+      ref: `ADV-NEG-${billNumber}`,
+      body: `Dear Customer,\n\nWe are pleased to advise that your Export Bill No. ${billNumber} has been negotiated under Letter of Credit LC-2025-EXP-001.\n\nNegotiated Amount: USD 485,000.00\nValue Date: 2025-05-11\nProceeds Credited To: A/C 0123-100001 (Al-Wadeeah Current)\n\nPlease note that proceeds are credited as collection basis. Final settlement subject to receipt from issuing bank.\n\nThank you for banking with SJIBL.`,
+    },
+    {
+      id: "adv-eb-2",
+      type: "Realization Advice",
+      date: "2025-05-14",
+      to: "Dhaka Garments Ltd. (Exporter)",
+      channel: "E-mail / Portal",
+      ref: `ADV-REL-${billNumber}`,
+      body: `Dear Customer,\n\nWe are pleased to confirm realization of Export Bill No. ${billNumber}.\n\nRealized Amount: USD 485,000.00\nBDT Equivalent: BDT 53,350,000.00 (@ 110.00)\nDate of Realization: 2025-05-14\nCredited To: A/C 0123-100001\n\nRegards,\nSJIBL Trade Finance Division`,
+    },
+    {
+      id: "adv-eb-3",
+      type: "FDBP Finance Advice",
+      date: "2025-05-12",
+      to: "Dhaka Garments Ltd. (Exporter)",
+      channel: "E-mail / Portal",
+      ref: `ADV-FDBP-${billNumber}`,
+      body: `Dear Customer,\n\nYour request for Foreign Documentary Bill Purchase (FDBP) financing against Export Bill ${billNumber} has been approved.\n\nFinanced Amount: USD 340,000.00\nProfit Rate: 7.50% per annum\nTenor: 90 Days\nMaturity Date: 2025-08-10\nFacility Account: A/C 0123-FDBP-44211\n\nShariah Basis: Murabaha (cost-plus financing) arrangement under SJIBL approved framework.\n\nRegards,\nSJIBL Trade Finance Division`,
+    },
+  ];
+}
+
+// ─── Export Bill Dashboard View ───────────────────────────────────────────────
+function ExportBillDashboardView() {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [discrepancyFilter, setDiscrepancyFilter] = useState("all");
+
+  const records = EXPORT_BILL_MOCK;
+
+  const filtered = useMemo(() => {
+    let rows = [...records];
+    if (discrepancyFilter !== "all") {
+      rows = rows.filter((r) =>
+        String(r.discrepancyStatus || "").toLowerCase().includes(discrepancyFilter.toLowerCase())
+      );
+    }
+    if (statusFilter !== "all") {
+      rows = rows.filter((r) =>
+        String(r.status || "").toLowerCase() === statusFilter.toLowerCase()
+      );
+    }
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      rows = rows.filter((r) =>
+        Object.values(r).some((v) => String(v ?? "").toLowerCase().includes(q))
+      );
+    }
+    return rows;
+  }, [records, query, discrepancyFilter, statusFilter]);
+
+  const pendingCount = records.filter((r) => r.status === "Pending").length;
+  const totalUSD = records.filter((r) => r.currency === "USD").reduce((a, r) => a + Number(r.billAmount || 0), 0);
+  const totalEUR = records.filter((r) => r.currency === "EUR").reduce((a, r) => a + Number(r.billAmount || 0), 0);
+
+  const discrepancyBadgeColor = (s: string) => {
+    if (s?.includes("Clean")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (s?.includes("Minor")) return "bg-amber-50 text-amber-700 border-amber-200";
+    if (s?.includes("Major")) return "bg-rose-50 text-rose-700 border-rose-200";
+    return "bg-muted text-muted-foreground";
+  };
+
+  const statusColor = (s: string) => {
+    if (s === "Accepted" || s === "Settled") return "border-success text-success";
+    if (s === "Pending") return "border-amber-500 text-amber-600";
+    return "border-muted-foreground text-muted-foreground";
+  };
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">View Export Bill</span>
+      </nav>
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Trade Finance</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Export Bills</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Monitor, realize, and finance export documentary bills negotiated under Letters of Credit.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => toast.success("Export Bill PDF exported.")}><FileText className="w-4 h-4" />Export PDF</Button>
+          <Button variant="outline" onClick={() => toast.success("Export Bill Excel exported.")}><Download className="w-4 h-4" />Export Excel</Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Total Export Bills</div>
+          <div className="font-display text-3xl font-bold text-navy mt-2">{records.length}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{filtered.length} matching search</div>
+        </Card>
+        <Card className={`p-5 ${pendingCount > 0 ? "border-amber-300 bg-amber-50/30" : ""}`}>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Pending Acceptance</div>
+          <div className={`font-display text-3xl font-bold mt-2 ${pendingCount > 0 ? "text-amber-600" : "text-navy"}`}>{pendingCount}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Awaiting issuing bank payment</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">USD Bill Value</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">USD {totalUSD.toLocaleString("en-US", { minimumFractionDigits: 0 })}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Presented under export LCs</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">EUR Bill Value</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">EUR {totalEUR.toLocaleString("en-US", { minimumFractionDigits: 0 })}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Presented under export LCs</div>
+        </Card>
+      </div>
+
+      <Card className="p-4">
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="relative flex-1 min-w-48">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search bill number, beneficiary, LC, bank…"
+              className="pl-9"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="accepted">Accepted</SelectItem>
+              <SelectItem value="settled">Settled</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={discrepancyFilter} onValueChange={setDiscrepancyFilter}>
+            <SelectTrigger className="w-44"><SelectValue placeholder="Discrepancy" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Discrepancies</SelectItem>
+              <SelectItem value="clean">Clean</SelectItem>
+              <SelectItem value="minor">Minor Discrepancy</SelectItem>
+              <SelectItem value="major">Major Discrepancy</SelectItem>
+            </SelectContent>
+          </Select>
+          {(query || statusFilter !== "all" || discrepancyFilter !== "all") && (
+            <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setStatusFilter("all"); setDiscrepancyFilter("all"); }}>
+              <X className="w-4 h-4 mr-1" /> Clear
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <div className="p-4 border-b border-border flex items-center justify-between">
+          <h2 className="font-semibold text-sm">Export Bill Records</h2>
+          <Badge variant="outline">{filtered.length} Record{filtered.length !== 1 ? "s" : ""}</Badge>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Bill Number</TableHead>
+              <TableHead>LC Number</TableHead>
+              <TableHead>Beneficiary</TableHead>
+              <TableHead>Issuing Bank</TableHead>
+              <TableHead>Ccy</TableHead>
+              <TableHead className="text-right">Bill Amount</TableHead>
+              <TableHead>Maturity</TableHead>
+              <TableHead>Discrepancy</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={10} className="text-center text-muted-foreground py-10">
+                  No export bills match the current filters.
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtered.map((r) => (
+                <TableRow
+                  key={String(r.id)}
+                  className="hover:bg-muted/40 cursor-pointer"
+                  onClick={() => navigate({ to: "/app/$", params: { _splat: `export-bill/view/${r.id}` } })}
+                >
+                  <TableCell className="font-medium text-xs font-mono">{String(r.billNumber)}</TableCell>
+                  <TableCell className="text-xs font-mono">{String(r.lcNumber)}</TableCell>
+                  <TableCell className="text-xs">{String(r.beneficiary)}</TableCell>
+                  <TableCell className="text-xs">{String(r.issuingBank)}</TableCell>
+                  <TableCell className="text-xs font-mono">{String(r.currency)}</TableCell>
+                  <TableCell className="text-right font-mono text-xs font-semibold">
+                    {Number(r.billAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                  </TableCell>
+                  <TableCell className="text-xs">{String(r.maturityDate)}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={`text-[10px] ${discrepancyBadgeColor(String(r.discrepancyStatus))}`}>
+                      {String(r.discrepancyStatus)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={`text-[10px] ${statusColor(String(r.status))}`}>
+                      {String(r.status)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate({ to: "/app/$", params: { _splat: `export-bill/view/${r.id}` } });
+                      }}
+                    >
+                      <Eye className="w-3 h-3 mr-1" /> View
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Export Bill Detail View ──────────────────────────────────────────────────
+function ExportBillDetailView({ record }: { record: Record<string, unknown> }) {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("summary");
+
+  const swiftMessages = getExportBillSwiftMessages(String(record.billNumber));
+  const adviceMessages = getExportBillAdviceMessages(String(record.billNumber));
+
+  const fieldRow = (label: string, value: string | React.ReactNode, mono = false) => (
+    <div className="flex justify-between items-start border-b border-border/50 py-2 gap-3 last:border-0">
+      <span className="text-xs text-muted-foreground shrink-0 w-44">{label}</span>
+      <span className={`text-xs text-right ${mono ? "font-mono font-semibold text-navy" : "font-medium"}`}>{value}</span>
+    </div>
+  );
+
+  const discrepancyBadgeColor = (s: string) => {
+    if (s?.includes("Clean")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (s?.includes("Minor")) return "bg-amber-50 text-amber-700 border-amber-200";
+    if (s?.includes("Major")) return "bg-rose-50 text-rose-700 border-rose-200";
+    return "bg-muted text-muted-foreground";
+  };
+
+  const swiftBadge = (type: string) => {
+    const colors: Record<string, string> = {
+      MT754: "bg-blue-100 text-blue-700 border border-blue-300",
+      MT742: "bg-purple-100 text-purple-700 border border-purple-300",
+      MT799: "bg-slate-100 text-slate-700 border border-slate-300",
+    };
+    return colors[type] || "bg-muted text-muted-foreground border border-border";
+  };
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <button
+          onClick={() => navigate({ to: "/app/$", params: { _splat: "export-bill" } })}
+          className="hover:text-navy"
+        >
+          View Export Bill
+        </button>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">{String(record.billNumber)}</span>
+      </nav>
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Trade Finance · Export Bill</div>
+          <h1 className="font-display text-2xl font-bold text-navy mt-0.5">{String(record.billNumber)}</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {String(record.beneficiary)} · under {String(record.lcNumber)}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="outline" className={`${discrepancyBadgeColor(String(record.discrepancyStatus))} text-xs`}>
+            {String(record.discrepancyStatus)}
+          </Badge>
+          {record.status === "Accepted" && <Badge variant="outline" className="border-success text-success text-xs">Accepted</Badge>}
+          {record.status === "Pending" && <Badge variant="outline" className="border-amber-500 text-amber-600 text-xs">Pending</Badge>}
+          {record.status === "Settled" && <Badge variant="outline" className="border-blue-500 text-blue-600 text-xs">Settled</Badge>}
+          <Button variant="outline" size="sm" onClick={() => navigate({ to: "/app/$", params: { _splat: "export-bill" } })}>
+            <ArrowLeft className="w-4 h-4 mr-1" /> Back
+          </Button>
+          <Button size="sm" className="bg-gold text-gold-foreground hover:bg-gold/90" onClick={() => toast.success("Export Bill statement exported.")}>
+            <Download className="w-4 h-4 mr-1" /> Export PDF
+          </Button>
+        </div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="flex-wrap h-auto gap-1">
+          <TabsTrigger value="summary">Bill Summary</TabsTrigger>
+          <TabsTrigger value="lc-details">LC Details</TabsTrigger>
+          <TabsTrigger value="discrepancy">Discrepancy</TabsTrigger>
+          <TabsTrigger value="swift">SWIFT Messages</TabsTrigger>
+          <TabsTrigger value="advice">Advice</TabsTrigger>
+          <TabsTrigger value="investment">Finance / Credit</TabsTrigger>
+        </TabsList>
+
+        {/* ── TAB 1: Bill Summary ── */}
+        <TabsContent value="summary" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-4">
+              <Card className="p-6 space-y-1">
+                <h2 className="font-display text-lg font-bold text-navy mb-3">Export Bill Summary</h2>
+                {fieldRow("Bill Number", String(record.billNumber), true)}
+                {fieldRow("LC Reference", String(record.lcNumber), true)}
+                {fieldRow("Beneficiary (Exporter)", String(record.beneficiary))}
+                {fieldRow("Issuing Bank", String(record.issuingBank))}
+                {fieldRow("Bill Currency", String(record.currency))}
+                {fieldRow("Bill Amount", `${record.currency} ${Number(record.billAmount).toLocaleString("en-US", { minimumFractionDigits: 2 })}`, true)}
+                {fieldRow("LC Amount", `${record.currency} ${Number(record.lcAmount).toLocaleString("en-US", { minimumFractionDigits: 2 })}`, true)}
+                {fieldRow("Bill Date", String(record.billDate))}
+                {fieldRow("Maturity Date", String(record.maturityDate))}
+                {fieldRow("Payment Terms", String(record.paymentTerms))}
+                {fieldRow("Commodity", String(record.commodity))}
+                {fieldRow("Bill Status", String(record.status))}
+                {fieldRow("Discrepancy Status",
+                  <Badge variant="outline" className={`text-[10px] ${discrepancyBadgeColor(String(record.discrepancyStatus))}`}>
+                    {String(record.discrepancyStatus)}
+                  </Badge>
+                )}
+              </Card>
+              <Card className="p-6 space-y-1">
+                <h2 className="font-display text-sm font-bold text-navy mb-3">Shipment Details</h2>
+                {fieldRow("Port of Loading", String(record.shipmentPort))}
+                {fieldRow("Port of Discharge", String(record.destinationPort))}
+                {fieldRow("Shipment Date", String(record.billDate))}
+                {fieldRow("Incoterms", "FOB")}
+                {fieldRow("B/L Number", `BL-${String(record.billNumber).replace("EXPB-", "")}-2025`)}
+                {fieldRow("B/L Date", String(record.billDate))}
+              </Card>
+            </div>
+
+            <div className="space-y-4">
+              <Card className="p-5 bg-navy/5 border-navy/20">
+                <h3 className="font-semibold text-sm text-navy mb-3 flex items-center gap-2">
+                  <DollarSign className="w-4 h-4" /> Bill Financials
+                </h3>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between border-b pb-2">
+                    <span className="text-muted-foreground">Bill Amount</span>
+                    <span className="font-mono font-bold">{String(record.currency)} {Number(record.billAmount).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between border-b pb-2">
+                    <span className="text-muted-foreground">Bank Charges</span>
+                    <span className="font-mono">USD 1,200.00</span>
+                  </div>
+                  <div className="flex justify-between border-b pb-2">
+                    <span className="text-muted-foreground">SWIFT Charges</span>
+                    <span className="font-mono">USD 85.00</span>
+                  </div>
+                  <div className="flex justify-between font-bold pt-1">
+                    <span>Net Proceeds</span>
+                    <span className="font-mono text-navy">{String(record.currency)} {(Number(record.billAmount) - 1285).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-5">
+                <h3 className="font-semibold text-sm mb-3">Key Dates</h3>
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-3 h-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">Bill Date:</span>
+                    <span className="font-medium">{String(record.billDate)}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-3 h-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">Maturity:</span>
+                    <span className="font-medium">{String(record.maturityDate)}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-3 h-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">Terms:</span>
+                    <span className="font-medium">{String(record.paymentTerms)}</span>
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-5 bg-muted/30">
+                <div className="flex items-start gap-2">
+                  <Sparkles className="w-4 h-4 text-gold shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground">
+                    <strong>Shariah Note:</strong> Export bill financing under FDBP/PC operates via a Murabaha structure — the bank purchases the export receivable and earns a markup, which is permissible under Islamic finance.
+                  </p>
+                </div>
+              </Card>
+
+              <div className="space-y-2">
+                <Button className="w-full bg-gold text-gold-foreground hover:bg-gold/90 gap-1.5" onClick={() => toast.success("FDBP financing request submitted.")}>
+                  <Coins className="w-4 h-4" /> Request FDBP Financing
+                </Button>
+                <Button variant="outline" className="w-full gap-1.5" onClick={() => toast.success("Export Bill statement exported.")}>
+                  <FileText className="w-4 h-4" /> Export Statement
+                </Button>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 2: LC Details ── */}
+        <TabsContent value="lc-details" className="mt-4">
+          <Tabs defaultValue="general">
+            <TabsList>
+              <TabsTrigger value="general">General</TabsTrigger>
+              <TabsTrigger value="shipment">Shipment</TabsTrigger>
+              <TabsTrigger value="documents">Documents</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="general" className="mt-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card className="p-6 space-y-1">
+                  <h2 className="font-display text-lg font-bold text-navy mb-3">LC General Information</h2>
+                  {fieldRow("LC Number", String(record.lcNumber), true)}
+                  {fieldRow("LC Type", "Irrevocable Documentary LC")}
+                  {fieldRow("Issuing Bank", String(record.issuingBank))}
+                  {fieldRow("Advising Bank", "SJIBL Dhaka Main Branch")}
+                  {fieldRow("Negotiating Bank", "SJIBL Dhaka Main Branch")}
+                  {fieldRow("LC Currency", String(record.currency))}
+                  {fieldRow("LC Amount", `${record.currency} ${Number(record.lcAmount).toLocaleString("en-US", { minimumFractionDigits: 2 })}`, true)}
+                  {fieldRow("Payment Terms", String(record.paymentTerms))}
+                  {fieldRow("Tolerance (%)", "±5%")}
+                  {fieldRow("Partial Shipment", "Allowed")}
+                  {fieldRow("Transhipment", "Not Allowed")}
+                </Card>
+                <Card className="p-6 space-y-1">
+                  <h2 className="font-display text-lg font-bold text-navy mb-3">LC Dates & Parties</h2>
+                  {fieldRow("LC Issue Date", "2025-04-01")}
+                  {fieldRow("LC Expiry Date", "2025-09-30")}
+                  {fieldRow("Expiry Place", "Bangladesh")}
+                  {fieldRow("Latest Shipment Date", String(record.billDate))}
+                  {fieldRow("Applicant", "International Buyer Corp.")}
+                  {fieldRow("Beneficiary", String(record.beneficiary))}
+                  {fieldRow("Reimbursing Bank", "Citi Bank N.A., New York")}
+                  {fieldRow("Confirmation", "Unconfirmed")}
+                  {fieldRow("Transferable", "No")}
+                </Card>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="shipment" className="mt-4">
+              <Card className="p-6">
+                <h2 className="font-display text-lg font-bold text-navy mb-4">Shipment Terms</h2>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="space-y-1">
+                    {fieldRow("Port of Loading", String(record.shipmentPort))}
+                    {fieldRow("Port of Discharge", String(record.destinationPort))}
+                    {fieldRow("Incoterms", "FOB (Free On Board)")}
+                    {fieldRow("Mode of Transport", "Sea Freight")}
+                    {fieldRow("Carrier / Vessel", "MSC MARIANNA V. 004W")}
+                    {fieldRow("B/L Number", `BL-${String(record.billNumber).replace("EXPB-", "")}-2025`)}
+                    {fieldRow("B/L Date", String(record.billDate))}
+                    {fieldRow("Commodity", String(record.commodity))}
+                    {fieldRow("HS Code", "6204.62.00")}
+                    {fieldRow("Gross Weight", "12,400 KG")}
+                    {fieldRow("Net Weight", "11,950 KG")}
+                    {fieldRow("No. of Packages", "2,480 Cartons")}
+                  </div>
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Shipment Timeline</h3>
+                    <div className="space-y-2 text-xs">
+                      {[
+                        { date: "2025-04-25", event: "Cargo booking confirmed", done: true },
+                        { date: "2025-05-01", event: "Factory loading completed", done: true },
+                        { date: "2025-05-05", event: "Vessel departed Chittagong", done: true },
+                        { date: "2025-05-10", event: "B/L issued — documents presented", done: true },
+                        { date: "2025-05-18", event: "Vessel ETA at destination", done: record.status === "Settled" },
+                        { date: String(record.maturityDate), event: "Payment maturity date", done: record.status === "Settled" },
+                      ].map((item, i) => (
+                        <div key={i} className="flex items-start gap-3">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${item.done ? "bg-success text-white" : "bg-muted border border-border"}`}>
+                            {item.done ? <Check className="w-3 h-3" /> : <Clock className="w-3 h-3 text-muted-foreground" />}
+                          </div>
+                          <div>
+                            <div className="text-muted-foreground">{item.date}</div>
+                            <div className="font-medium">{item.event}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="documents" className="mt-4">
+              <Card>
+                <div className="p-4 border-b border-border">
+                  <h2 className="font-display text-lg font-bold text-navy">Required Documents Checklist</h2>
+                  <p className="text-xs text-muted-foreground mt-1">LC stipulated documents vs. presented documents</p>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Document</TableHead>
+                      <TableHead>Required</TableHead>
+                      <TableHead>Presented</TableHead>
+                      <TableHead>Originals</TableHead>
+                      <TableHead>Copies</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {[
+                      { doc: "Commercial Invoice", req: "1 Original + 3 Copies", presented: "1 + 3", orig: 1, copies: 3, ok: true },
+                      { doc: "Full Set Clean On Board B/L", req: "3/3 Originals", presented: "3/3", orig: 3, copies: 0, ok: true },
+                      { doc: "Packing List", req: "1 Original + 2 Copies", presented: "1 + 2", orig: 1, copies: 2, ok: true },
+                      { doc: "Certificate of Origin", req: "1 Original", presented: "1", orig: 1, copies: 0, ok: true },
+                      { doc: "Insurance Certificate", req: "2 Originals", presented: "1", orig: 1, copies: 0, ok: false },
+                      { doc: "Inspection Certificate", req: "1 Original", presented: "1", orig: 1, copies: 0, ok: true },
+                      { doc: "Weight & Measurement Certificate", req: "1 Original", presented: "1", orig: 1, copies: 0, ok: true },
+                    ].map((d, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="font-medium text-xs">{d.doc}</TableCell>
+                        <TableCell className="text-xs">{d.req}</TableCell>
+                        <TableCell className="text-xs">{d.presented}</TableCell>
+                        <TableCell className="text-xs">{d.orig}</TableCell>
+                        <TableCell className="text-xs">{d.copies}</TableCell>
+                        <TableCell>
+                          {d.ok
+                            ? <Badge variant="outline" className="text-[10px] text-success border-success bg-success/5">Compliant</Badge>
+                            : <Badge variant="outline" className="text-[10px] text-rose-600 border-rose-400 bg-rose-50">Discrepant</Badge>
+                          }
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
+
+        {/* ── TAB 3: Discrepancy ── */}
+        <TabsContent value="discrepancy" className="mt-4">
+          <div className="space-y-4">
+            <Card className="p-6">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Discrepancy Summary</h2>
+              <div className="flex items-center gap-3 mb-4">
+                <Badge variant="outline" className={`px-3 py-1 text-sm font-bold ${discrepancyBadgeColor(String(record.discrepancyStatus))}`}>
+                  {String(record.discrepancyStatus)}
+                </Badge>
+                {record.discrepancyStatus === "Clean" && (
+                  <span className="text-xs text-muted-foreground">All documents comply with LC terms and conditions.</span>
+                )}
+                {String(record.discrepancyStatus).includes("Discrepancy") && (
+                  <span className="text-xs text-amber-600 font-medium">Issuing bank or applicant review required.</span>
+                )}
+              </div>
+
+              {record.discrepancyStatus === "Clean" ? (
+                <div className="p-6 rounded-lg bg-emerald-50/60 border border-emerald-200 text-center space-y-2">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
+                  <p className="font-semibold text-emerald-700">No Discrepancies Found</p>
+                  <p className="text-xs text-emerald-600 max-w-md mx-auto">
+                    All presented documents are in strict conformity with the LC terms. Payment will proceed on the due date per the agreed schedule.
+                  </p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>#</TableHead>
+                      <TableHead>Document</TableHead>
+                      <TableHead>Discrepancy Description</TableHead>
+                      <TableHead>Severity</TableHead>
+                      <TableHead>Issuing Bank Response</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {[
+                      {
+                        num: 1,
+                        doc: "Insurance Certificate",
+                        desc: "Only 1 original presented; LC requires 2 originals per Field 46A",
+                        severity: record.discrepancyStatus === "Major Discrepancy" ? "Major" : "Minor",
+                        response: record.discrepancyStatus === "Major Discrepancy" ? "Pending applicant waiver" : "Applicant accepted under reserve",
+                        status: record.discrepancyStatus === "Major Discrepancy" ? "Open" : "Resolved",
+                      },
+                      ...(record.discrepancyStatus === "Major Discrepancy" ? [{
+                        num: 2,
+                        doc: "Bill of Lading",
+                        desc: "B/L date (05-10) is after latest shipment date (05-08) stipulated in LC",
+                        severity: "Major",
+                        response: "Issuing bank awaiting applicant instruction",
+                        status: "Open",
+                      }] : []),
+                    ].map((d, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-xs">{d.num}</TableCell>
+                        <TableCell className="font-medium text-xs">{d.doc}</TableCell>
+                        <TableCell className="text-xs max-w-xs">{d.desc}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] ${d.severity === "Major" ? "border-rose-400 text-rose-600 bg-rose-50" : "border-amber-400 text-amber-600 bg-amber-50"}`}>
+                            {d.severity}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs">{d.response}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] ${d.status === "Resolved" ? "border-success text-success bg-success/5" : "border-amber-400 text-amber-600"}`}>
+                            {d.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Card>
+
+            {String(record.discrepancyStatus).includes("Discrepancy") && (
+              <Card className="p-5 bg-amber-50/40 border-amber-200">
+                <div className="flex items-start gap-3">
+                  <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-800 space-y-1">
+                    <p className="font-semibold">Discrepancy Resolution Process</p>
+                    <p>Documents presented with discrepancies were forwarded to the issuing bank "under reserve." The issuing bank will seek applicant's waiver. Upon waiver, payment proceeds.</p>
+                    <p className="mt-2">SJIBL Ref: {String(record.billNumber)} | Forwarded: {String(record.billDate)}</p>
+                    <div className="flex gap-2 mt-3">
+                      <Button size="sm" variant="outline" className="text-xs h-7 border-amber-400 text-amber-700 hover:bg-amber-100" onClick={() => toast.success("Waiver request reminder sent to issuing bank.")}>
+                        <Send className="w-3 h-3 mr-1" /> Send Reminder
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 4: SWIFT Messages ── */}
+        <TabsContent value="swift" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">SWIFT Message Log</h2>
+              <Badge variant="outline">{swiftMessages.length} Messages</Badge>
+            </div>
+            <div className="divide-y divide-border">
+              {swiftMessages.map((msg) => (
+                <div key={msg.id} className="p-5 space-y-2">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge className={`text-[10px] font-bold px-2 py-0.5 ${swiftBadge(msg.msgType)}`}>
+                        {msg.msgType}
+                      </Badge>
+                      <Badge variant="outline" className={`text-[10px] ${msg.direction === "Received" ? "border-blue-400 text-blue-600" : "border-purple-400 text-purple-600"}`}>
+                        {msg.direction === "Received" ? "↓ " : "↑ "}{msg.direction}
+                      </Badge>
+                      <span className="text-xs font-semibold">{msg.subject}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">{msg.date}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">{msg.from}</div>
+                  <pre className="text-[10px] bg-muted/40 rounded p-3 overflow-auto whitespace-pre-wrap font-mono border border-border/50">
+                    {msg.body}
+                  </pre>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => toast.success(`${msg.msgType} downloaded.`)}>
+                      <Download className="w-3 h-3 mr-1" /> Download
+                    </Button>
+                    <Badge variant="outline" className={`text-[10px] ml-auto ${msg.status === "Processed" || msg.status === "Acknowledged" ? "border-success text-success" : "border-muted-foreground text-muted-foreground"}`}>
+                      {msg.status}
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* ── TAB 5: Advice ── */}
+        <TabsContent value="advice" className="mt-4">
+          <div className="space-y-4">
+            {adviceMessages.map((adv) => (
+              <Card key={adv.id} className="p-5">
+                <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+                  <div>
+                    <Badge variant="outline" className="text-[10px] border-navy/30 text-navy mb-1">{adv.type}</Badge>
+                    <div className="text-xs text-muted-foreground">To: {adv.to}</div>
+                    <div className="text-xs text-muted-foreground">Ref: {adv.ref} · {adv.date}</div>
+                  </div>
+                  <Badge variant="outline" className="text-[10px]">{adv.channel}</Badge>
+                </div>
+                <pre className="text-xs bg-muted/30 rounded-lg p-4 whitespace-pre-wrap font-mono border border-border/50 leading-relaxed">
+                  {adv.body}
+                </pre>
+                <div className="flex gap-2 mt-3">
+                  <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => toast.success(`${adv.type} downloaded.`)}>
+                    <Download className="w-3 h-3 mr-1" /> Download
+                  </Button>
+                  <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => toast.success(`${adv.type} re-sent to customer.`)}>
+                    <Send className="w-3 h-3 mr-1" /> Resend
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 6: Finance / Credit ── */}
+        <TabsContent value="investment" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-4">
+              <Card className="p-6 space-y-4">
+                <h2 className="font-display text-lg font-bold text-navy">Export Finance Summary</h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                    <div className="text-xs text-muted-foreground">Financing Type</div>
+                    <div className="font-semibold text-sm">FDBP — Foreign Documentary Bill Purchase</div>
+                  </div>
+                  <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                    <div className="text-xs text-muted-foreground">Shariah Structure</div>
+                    <div className="font-semibold text-sm">Murabaha (Cost-Plus)</div>
+                  </div>
+                  <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                    <div className="text-xs text-muted-foreground">Financed Amount (up to 70%)</div>
+                    <div className="font-mono font-bold text-navy text-base">
+                      {String(record.currency)} {Number(Number(record.billAmount) * 0.7).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                    </div>
+                  </div>
+                  <div className="p-4 bg-muted/30 rounded-md space-y-1">
+                    <div className="text-xs text-muted-foreground">Export Credit Profit Rate</div>
+                    <div className="font-semibold text-sm">7.50% per annum</div>
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-6 space-y-3">
+                <h3 className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">Active Export Finance Accounts</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Facility Account</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Financed</TableHead>
+                      <TableHead>Profit Rate</TableHead>
+                      <TableHead>Value Date</TableHead>
+                      <TableHead>Maturity</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell className="font-medium text-xs">A/C 0123-FDBP-44211</TableCell>
+                      <TableCell className="text-xs">FDBP</TableCell>
+                      <TableCell className="font-mono text-xs">{String(record.currency)} {Number(Number(record.billAmount) * 0.7).toLocaleString()}</TableCell>
+                      <TableCell className="text-xs">7.50% p.a.</TableCell>
+                      <TableCell className="text-xs">{String(record.billDate)}</TableCell>
+                      <TableCell className="text-xs">{String(record.maturityDate)}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px] text-success border-success bg-success/5">Active</Badge></TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell className="font-medium text-xs">A/C 0123-PC-10022</TableCell>
+                      <TableCell className="text-xs">Packing Credit</TableCell>
+                      <TableCell className="font-mono text-xs">USD 150,000</TableCell>
+                      <TableCell className="text-xs">7.50% p.a.</TableCell>
+                      <TableCell className="text-xs">2025-04-01</TableCell>
+                      <TableCell className="text-xs">2025-07-01</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px] text-success border-success bg-success/5">Active</Badge></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </Card>
+
+              <Card className="p-6 space-y-3">
+                <h3 className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">FDBP Profit Amortization Schedule</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Period</TableHead>
+                      <TableHead>Principal</TableHead>
+                      <TableHead>Profit</TableHead>
+                      <TableHead>Total Due</TableHead>
+                      <TableHead>Due Date</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {[
+                      { period: "Month 1", principal: Number(record.billAmount) * 0.7 / 3, profit: Number(record.billAmount) * 0.7 * 0.075 / 12, dueDate: "2025-06-10", done: true },
+                      { period: "Month 2", principal: Number(record.billAmount) * 0.7 / 3, profit: Number(record.billAmount) * 0.7 * 0.075 / 12, dueDate: "2025-07-10", done: record.status === "Settled" },
+                      { period: "Month 3 (Final)", principal: Number(record.billAmount) * 0.7 / 3, profit: Number(record.billAmount) * 0.7 * 0.075 / 12, dueDate: String(record.maturityDate), done: record.status === "Settled" },
+                    ].map((row, i) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-xs font-medium">{row.period}</TableCell>
+                        <TableCell className="font-mono text-xs">{String(record.currency)} {row.principal.toLocaleString("en-US", { maximumFractionDigits: 0 })}</TableCell>
+                        <TableCell className="font-mono text-xs">{String(record.currency)} {row.profit.toLocaleString("en-US", { maximumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="font-mono text-xs font-semibold">{String(record.currency)} {(row.principal + row.profit).toLocaleString("en-US", { maximumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-xs">{row.dueDate}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] ${row.done ? "text-success border-success bg-success/5" : "text-amber-600 border-amber-400"}`}>
+                            {row.done ? "Paid" : "Pending"}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            </div>
+
+            <div className="space-y-4">
+              <Card className="p-6">
+                <h2 className="font-display text-sm font-bold text-navy mb-4">Export Credit Ledger</h2>
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <span className="text-muted-foreground block mb-0.5">Approved Export Credit Limit</span>
+                    <div className="font-mono font-bold text-sm text-navy">BDT 300,000,000</div>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block mb-0.5">Outstanding Balance</span>
+                    <div className="font-mono font-bold text-sm text-amber-600">BDT 182,400,000</div>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block mb-0.5">Available Headroom</span>
+                    <div className="font-mono font-bold text-sm text-success">BDT 117,600,000</div>
+                  </div>
+                  <div className="border-t pt-3 space-y-2">
+                    <Button className="w-full bg-gold text-gold-foreground hover:bg-gold/90 gap-1.5 text-xs" onClick={() => toast.success("FDBP request form opened.")}>
+                      <Coins className="w-3.5 h-3.5" /> Request FDBP Finance
+                    </Button>
+                    <Button variant="outline" className="w-full gap-1.5 text-xs" onClick={() => toast.success("Packing Credit request opened.")}>
+                      <ArrowUpRight className="w-3.5 h-3.5" /> Apply Packing Credit (PC)
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="p-5 bg-muted/30">
+                <div className="flex items-start gap-2">
+                  <Sparkles className="w-4 h-4 text-gold shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground">
+                    <strong>Shariah Note:</strong> FDBP and Packing Credit are structured as Murabaha facilities. The bank purchases the export receivable (FDBP) or advances funds against confirmed export orders (PC), earning a halal markup rather than conventional interest.
+                  </p>
+                </div>
+              </Card>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
