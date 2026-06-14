@@ -248,6 +248,18 @@ function seed(slug: string): Record[] {
         { ...base(2, "Approved"), name: "Yangtse Trading", nickname: "Yangtse-CN",
           type: "Foreign (SWIFT)", account: "CN-77110099", bankName: "Bank of China",
           branch: "Shanghai", swiftCode: "BKCHCNBJ", currency: "USD" },
+        { ...base(3, "Approved"), name: "Shahjalal Mudaraba Savings", nickname: "Own-Savings",
+          type: "Within Bank", account: "0123100002", bankName: "Shahjalal Islami Bank PLC",
+          branch: "Motijheel", currency: "BDT" },
+        { ...base(4, "Pending"), name: "Abul Khair Group", nickname: "Abul Khair",
+          type: "Other Bank (EFTN/RTGS/NPSB)", account: "0189100055",
+          bankName: "Shahjalal Islami Bank PLC", branch: "Chittagong Main", currency: "BDT" },
+        { ...base(5, "Approved"), name: "BRAC Logistics", nickname: "BRAC Log",
+          type: "Other Bank (EFTN/RTGS/NPSB)", account: "5577001188",
+          bankName: "BRAC Bank", branch: "Gulshan", currency: "BDT" },
+        { ...base(6, "Approved"), name: "Energypac Ltd UK", nickname: "Energypac-UK",
+          type: "Foreign (SWIFT)", account: "GB29HSBC12345678", bankName: "HSBC UK",
+          branch: "London", swiftCode: "MIDLGB22", currency: "GBP" },
       ];
     case "bill-pay":
       return [

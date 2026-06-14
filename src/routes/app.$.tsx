@@ -2,7 +2,7 @@ import { createFileRoute, Link, notFound, useParams, useNavigate } from "@tansta
 import { useMemo, useState } from "react";
 import { getModule, MODULES } from "@/lib/modules";
 import { getSchema } from "@/lib/moduleSchema";
-import { list, get } from "@/lib/moduleStore";
+import { list, get, update, remove } from "@/lib/moduleStore";
 import { ModuleForm } from "@/components/module/ModuleForm";
 import { ModuleDetail } from "@/components/module/ModuleDetail";
 import { Card } from "@/components/ui/card";
@@ -13,15 +13,17 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  Download, Filter, Plus, FileText, Sparkles, ChevronRight, Eye, Pencil,
+  Download, Filter, Plus, FileText, Sparkles, ChevronRight, Eye, Pencil, Trash2, CheckSquare, UserPlus,
   ArrowLeft, ArrowDownLeft, ArrowUpRight, CheckCircle2, Info, Coins, Wallet, DollarSign, Calendar, Search, FileSpreadsheet,
-  Upload, Check, X, Send, Clock, RefreshCw, Building2, Smartphone, ArrowRightLeft, History, AlarmClock
+  Upload, Check, X, Send, Clock, RefreshCw, Building2, Smartphone, ArrowRightLeft, History, AlarmClock,
+  Zap, Phone, CreditCard, Receipt, Wifi, Lightbulb, Globe, ChevronLeft
 } from "lucide-react";
 import { getTransactionsForAccount, type Transaction } from "@/lib/accounts";
 import { getInvestmentTransactions, type InvestmentTransaction } from "@/lib/investments";
 import { getTDTransactions, getProfitSchedule, type TDTransaction } from "@/lib/termDeposits";
 import { getFundTransferHistory, type FundTransferRecord, OWN_ACCOUNTS, BANGLADESH_BANKS, TRANSFER_PURPOSES } from "@/lib/fundTransfers";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -107,6 +109,43 @@ function ModuleRouter() {
     }
     if (!action) {
       return <InvestmentDashboardView />;
+    }
+  }
+
+  if (slug === "beneficiary") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <BeneficiaryDetailView record={record} />;
+    }
+    if (!action) {
+      return <BeneficiaryDashboardView />;
+    }
+  }
+
+  if (slug === "bill-pay") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <BillPayDetailView record={record} />;
+    }
+    if (action === "new") {
+      const subType = id || "utility";
+      return <BillPayFormView billType={subType} />;
+    }
+    if (!action) {
+      return <BillPayDashboardView />;
+    }
+  }
+
+  if (slug === "import-lc") {
+    if (action === "view" && id) {
+      const record = get(slug, id);
+      if (!record) return <RecordMissing slug={slug} />;
+      return <ImportLCDetailView record={record} />;
+    }
+    if (!action) {
+      return <ImportLCDashboardView />;
     }
   }
 
@@ -3040,6 +3079,11 @@ function FundTransferDashboardView() {
 /* ---- Transfer Form ---- */
 function FundTransferFormView({ transferType }: { transferType: string }) {
   const navigate = useNavigate();
+
+  const searchParams = useMemo(() => {
+    return typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  }, []);
+
   const typeMap: Record<string, string> = {
     own: "Own Account", within: "Within Bank", eftn: "EFTN", rtgs: "RTGS", npsb: "NPSB", schedule: "EFTN"
   };
@@ -3049,13 +3093,13 @@ function FundTransferFormView({ transferType }: { transferType: string }) {
   const [selectedType, setSelectedType] = useState(initialType);
   const [fromAccount, setFromAccount] = useState(OWN_ACCOUNTS[0].id);
   const [toAccount, setToAccount] = useState(OWN_ACCOUNTS[1].id); // for own account
-  const [beneficiary, setBeneficiary] = useState("");
-  const [beneficiaryAccount, setBeneficiaryAccount] = useState("");
-  const [beneficiaryBank, setBeneficiaryBank] = useState("");
-  const [beneficiaryBranch, setBeneficiaryBranch] = useState("");
-  const [routingNo, setRoutingNo] = useState("");
+  const [beneficiary, setBeneficiary] = useState(searchParams?.get("beneficiary") || "");
+  const [beneficiaryAccount, setBeneficiaryAccount] = useState(searchParams?.get("account") || "");
+  const [beneficiaryBank, setBeneficiaryBank] = useState(searchParams?.get("bank") || "");
+  const [beneficiaryBranch, setBeneficiaryBranch] = useState(searchParams?.get("branch") || "");
+  const [routingNo, setRoutingNo] = useState(searchParams?.get("routing") || "");
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("BDT");
+  const [currency, setCurrency] = useState(searchParams?.get("currency") || "BDT");
   const [purpose, setPurpose] = useState("");
   const [narration, setNarration] = useState("");
   const [remarks, setRemarks] = useState("");
@@ -3682,6 +3726,2292 @@ function FundTransferDetailView({ record }: { record: any }) {
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+/* ===================== BENEFICIARY VIEWS ===================== */
+
+function BeneficiaryDashboardView() {
+  const beneficiaries = list("beneficiary");
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [tab, setTab] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const totalCount = beneficiaries.length;
+  const withinBankCount = beneficiaries.filter((b: any) => b.type === "Within Bank").length;
+  const otherBankCount = beneficiaries.filter((b: any) => b.type === "Other Bank (EFTN/RTGS/NPSB)").length;
+  const foreignCount = beneficiaries.filter((b: any) => b.type === "Foreign (SWIFT)").length;
+  const pendingCount = beneficiaries.filter((b: any) => b.status === "Pending").length;
+
+  const filtered = useMemo(() => {
+    let list = [...beneficiaries];
+    
+    // Type Filter
+    if (tab === "within") {
+      list = list.filter(b => b.type === "Within Bank");
+    } else if (tab === "other") {
+      list = list.filter(b => b.type === "Other Bank (EFTN/RTGS/NPSB)");
+    } else if (tab === "foreign") {
+      list = list.filter(b => b.type === "Foreign (SWIFT)");
+    }
+
+    // Status Filter
+    if (statusFilter !== "all") {
+      list = list.filter(b => String(b.status).toLowerCase() === statusFilter.toLowerCase());
+    }
+
+    // Search Query
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(b => 
+        String(b.name || "").toLowerCase().includes(q) ||
+        String(b.nickname || "").toLowerCase().includes(q) ||
+        String(b.account || "").toLowerCase().includes(q) ||
+        String(b.bankName || "").toLowerCase().includes(q) ||
+        String(b.branch || "").toLowerCase().includes(q)
+      );
+    }
+    
+    return list;
+  }, [beneficiaries, tab, statusFilter, query]);
+
+  function getInitials(name: string) {
+    const parts = name.split(" ").filter(Boolean);
+    if (parts.length === 0) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function getTransferLink(b: any) {
+    const params = new URLSearchParams();
+    params.set("beneficiary", b.name);
+    params.set("account", b.account);
+    params.set("bank", b.bankName);
+    params.set("branch", b.branch || "");
+    params.set("routing", b.swiftCode || b.routingNo || "");
+    params.set("currency", b.currency || "BDT");
+    
+    let path = "eftn";
+    if (b.type === "Within Bank") {
+      path = "within";
+    } else if (b.type === "Foreign (SWIFT)") {
+      path = "foreign";
+    } else {
+      path = "eftn";
+    }
+    return `/app/fund-transfer/new/${path}?${params.toString()}`;
+  }
+
+  function handleDelete(id: string) {
+    remove("beneficiary", id);
+    toast.success("Beneficiary removed successfully");
+    navigate({ to: "/app/$", params: { _splat: "beneficiary" } });
+  }
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">Beneficiary Management</span>
+      </nav>
+
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Payments & Transfers</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Beneficiary Management</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Maintain your beneficiary directory for fast transfers. Added entries require Maker–Checker authorization.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button asChild className="bg-navy text-navy-foreground hover:bg-navy/90">
+            <Link to="/app/$" params={{ _splat: "beneficiary/new" }}>
+              <Plus className="w-4 h-4 mr-2" /> Add Beneficiary
+            </Link>
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <Card className="p-5 flex flex-col justify-between">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Total Beneficiaries</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">{totalCount}</div>
+        </Card>
+        <Card className="p-5 flex flex-col justify-between">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Within SJIBL</div>
+          <div className="font-display text-2xl font-bold text-gold mt-2">{withinBankCount}</div>
+        </Card>
+        <Card className="p-5 flex flex-col justify-between">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Other Banks</div>
+          <div className="font-display text-2xl font-bold text-foreground mt-2">{otherBankCount}</div>
+        </Card>
+        <Card className="p-5 flex flex-col justify-between">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Foreign Payees</div>
+          <div className="font-display text-2xl font-bold text-foreground mt-2">{foreignCount}</div>
+        </Card>
+        <Card className="p-5 flex flex-col justify-between col-span-2 lg:col-span-1 bg-gold/[0.04] border-gold/30">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Pending Action</div>
+          <div className={`font-display text-2xl font-bold mt-2 ${pendingCount > 0 ? "text-warning animate-pulse" : "text-success"}`}>
+            {pendingCount}
+          </div>
+        </Card>
+      </div>
+
+      {/* Search & Filter section */}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-1 items-center gap-3 min-w-[280px] max-w-md">
+            <div className="relative w-full">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search beneficiary name, account, bank..."
+                className="pl-9 w-full"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="Status Filter" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
+                <SelectItem value="draft">Draft</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </Card>
+
+      {/* Tabs list */}
+      <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+        <div className="bg-card p-1.5 rounded-lg border border-border inline-flex">
+          <TabsList>
+            <TabsTrigger value="all">All Payees</TabsTrigger>
+            <TabsTrigger value="within">Within SJIBL</TabsTrigger>
+            <TabsTrigger value="other">Other Banks</TabsTrigger>
+            <TabsTrigger value="foreign">Foreign SWIFT</TabsTrigger>
+          </TabsList>
+        </div>
+
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/30">
+                  <TableHead className="w-[50px]"></TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wide">Beneficiary</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wide">Account Number</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wide">Bank / Branch</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wide">Currency</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wide">Status</TableHead>
+                  <TableHead className="text-[11px] uppercase tracking-wide text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-10">
+                      No beneficiaries found matching the criteria.{" "}
+                      <Link to="/app/$" params={{ _splat: "beneficiary/new" }} className="text-gold hover:underline font-semibold">
+                        Add a new beneficiary
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ) : filtered.map((b) => (
+                  <TableRow key={b.id} className="hover:bg-muted/10">
+                    <TableCell>
+                      <div className="w-8 h-8 rounded-full bg-navy/10 text-navy font-bold flex items-center justify-center text-xs">
+                        {getInitials(String(b.name || ""))}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div>
+                        <Link to="/app/$" params={{ _splat: `beneficiary/view/${b.id}` }} className="font-semibold text-navy hover:text-gold block text-sm">
+                          {String(b.name)}
+                        </Link>
+                        {b.nickname && (
+                          <span className="text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded font-medium mt-0.5 inline-block">
+                            {String(b.nickname)}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs font-semibold text-foreground">
+                      {String(b.account)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-xs font-medium text-foreground">{String(b.bankName)}</div>
+                      {b.branch && <div className="text-[10px] text-muted-foreground">{String(b.branch)}</div>}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={b.currency === "BDT" ? "bg-navy/5 text-navy border-navy/20" : "bg-gold/5 text-gold border-gold/20"}>
+                        {String(b.currency || "BDT")}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {statusBadge(String(b.status))}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1.5 items-center">
+                        {b.status === "Approved" ? (
+                          <Button size="sm" className="bg-gold text-gold-foreground hover:bg-gold/90 text-xs gap-1 h-8 px-2.5" asChild>
+                            <Link to="/app/$" params={{ _splat: getTransferLink(b).replace("/app/fund-transfer/new/", "fund-transfer/new/") }}>
+                              <Send className="w-3 h-3" /> Pay
+                            </Link>
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="ghost" disabled className="text-xs h-8 px-2.5 gap-1">
+                            <Clock className="w-3 h-3" /> Locked
+                          </Button>
+                        )}
+
+                        <Button size="sm" variant="ghost" className="h-8 px-2" asChild>
+                          <Link to="/app/$" params={{ _splat: `beneficiary/view/${b.id}` }}>
+                            <Eye className="w-3.5 h-3.5" />
+                          </Link>
+                        </Button>
+
+                        <Button size="sm" variant="ghost" className="h-8 px-2" asChild>
+                          <Link to="/app/$" params={{ _splat: `beneficiary/edit/${b.id}` }}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Link>
+                        </Button>
+
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10 hover:text-destructive h-8 px-2">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remove Beneficiary?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Are you sure you want to remove <span className="font-semibold text-foreground">{String(b.name)}</span> from your payee list?
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleDelete(b.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      </Tabs>
+    </div>
+  );
+}
+
+function BeneficiaryDetailView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const session = getSession();
+  const isChecker = ["Checker", "Approver", "Admin"].includes(session?.role || "Maker");
+
+  function onDelete() {
+    remove("beneficiary", record.id);
+    toast.success("Beneficiary deleted successfully");
+    navigate({ to: "/app/$", params: { _splat: "beneficiary" } });
+  }
+
+  function handleSetStatus(status: string) {
+    update("beneficiary", record.id, { status });
+    toast.success(`Beneficiary marked as ${status}`);
+    navigate({ to: "/app/$", params: { _splat: `beneficiary/view/${record.id}` } });
+  }
+
+  function getTransferLink() {
+    const params = new URLSearchParams();
+    params.set("beneficiary", record.name);
+    params.set("account", record.account);
+    params.set("bank", record.bankName);
+    params.set("branch", record.branch || "");
+    params.set("routing", record.swiftCode || record.routingNo || "");
+    params.set("currency", record.currency || "BDT");
+    
+    let path = "eftn";
+    if (record.type === "Within Bank") {
+      path = "within";
+    } else if (record.type === "Foreign (SWIFT)") {
+      path = "foreign";
+    } else {
+      path = "eftn";
+    }
+    return `/app/fund-transfer/new/${path}?${params.toString()}`;
+  }
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "beneficiary" }} className="hover:text-navy">Beneficiary Management</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.id}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">{record.type}</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">{record.name}</h1>
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-xs font-mono text-muted-foreground">{record.id}</span>
+            {statusBadge(record.status)}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {record.status === "Approved" ? (
+            <Button className="bg-gold text-gold-foreground hover:bg-gold/90 font-semibold gap-1.5" asChild>
+              <Link to="/app/$" params={{ _splat: getTransferLink().replace("/app/fund-transfer/new/", "fund-transfer/new/") }}>
+                <Send className="w-4 h-4" /> Transfer Funds
+              </Link>
+            </Button>
+          ) : (
+            <Button disabled className="gap-1.5">
+              <Clock className="w-4 h-4" /> Awaiting Approval
+            </Button>
+          )}
+
+          <Button variant="outline" asChild>
+            <Link to="/app/$" params={{ _splat: `beneficiary/edit/${record.id}` }}>
+              <Pencil className="w-4 h-4 mr-2" /> Edit
+            </Link>
+          </Button>
+
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" className="border-destructive text-destructive hover:bg-destructive/10">
+                <Trash2 className="w-4 h-4 mr-2" /> Delete
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this beneficiary?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This action cannot be undone. The record {record.id} ({record.name}) will be permanently removed.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left column: Beneficiary Info */}
+        <div className="lg:col-span-2 space-y-6">
+          <Card className="p-6">
+            <h2 className="font-display text-lg font-bold text-navy mb-4 flex items-center gap-2">
+              <UserPlus className="w-5 h-5 text-gold" /> Payee Profile
+            </h2>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Beneficiary Name</dt>
+                <dd className="mt-1 text-sm font-medium text-foreground">{record.name}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nickname</dt>
+                <dd className="mt-1 text-sm font-medium text-foreground">{record.nickname || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Payee Account / IBAN</dt>
+                <dd className="mt-1 text-sm font-mono font-bold text-navy">{record.account}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Transfer Mode</dt>
+                <dd className="mt-1 text-sm font-medium text-foreground">{record.type}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Bank Name</dt>
+                <dd className="mt-1 text-sm font-medium text-foreground">{record.bankName}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Branch Name</dt>
+                <dd className="mt-1 text-sm font-medium text-foreground">{record.branch || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">SWIFT / Routing Code</dt>
+                <dd className="mt-1 text-sm font-mono">{record.swiftCode || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Preferred Currency</dt>
+                <dd className="mt-1 text-sm">
+                  <Badge variant="outline" className="bg-navy/5 text-navy border-navy/20 font-bold">
+                    {record.currency || "BDT"}
+                  </Badge>
+                </dd>
+              </div>
+              {record.email && (
+                <div>
+                  <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Email Address</dt>
+                  <dd className="mt-1 text-sm font-medium text-foreground">{record.email}</dd>
+                </div>
+              )}
+              {record.phone && (
+                <div>
+                  <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Phone Number</dt>
+                  <dd className="mt-1 text-sm font-medium text-foreground">{record.phone}</dd>
+                </div>
+              )}
+              {record.address && (
+                <div className="sm:col-span-2">
+                  <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Physical Address</dt>
+                  <dd className="mt-1 text-sm font-medium text-foreground whitespace-pre-wrap">{record.address}</dd>
+                </div>
+              )}
+            </dl>
+          </Card>
+        </div>
+
+        {/* Right column: Checker Actions & Audit Trail */}
+        <div className="space-y-6">
+          {record.status === "Pending" && (
+            <Card className="p-5 border border-warning bg-warning/5 space-y-4">
+              <div className="flex items-center gap-2">
+                <CheckSquare className="w-5 h-5 text-warning" />
+                <h3 className="font-semibold text-sm text-warning">Checker Authorization Panel</h3>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Review this beneficiary entry. Verify account details against invoice/requisition forms before signing.
+              </p>
+              
+              <div className="space-y-2 border-y border-border py-3">
+                <div className="flex items-start gap-2 text-xs">
+                  <input type="checkbox" className="mt-0.5 cursor-pointer" id="chk-acct" defaultChecked />
+                  <label htmlFor="chk-acct" className="text-muted-foreground cursor-pointer select-none">Account Title & Number matches core records</label>
+                </div>
+                <div className="flex items-start gap-2 text-xs">
+                  <input type="checkbox" className="mt-0.5 cursor-pointer" id="chk-routing" defaultChecked />
+                  <label htmlFor="chk-routing" className="text-muted-foreground cursor-pointer select-none">Routing number and branch details validated</label>
+                </div>
+                <div className="flex items-start gap-2 text-xs">
+                  <input type="checkbox" className="mt-0.5 cursor-pointer" id="chk-kyc" defaultChecked />
+                  <label htmlFor="chk-kyc" className="text-muted-foreground cursor-pointer select-none">AML / Sanctions check complete</label>
+                </div>
+              </div>
+
+              {isChecker ? (
+                <div className="flex gap-2 pt-1">
+                  <Button className="flex-1 bg-success hover:bg-success/90 text-white font-semibold text-xs h-9" onClick={() => handleSetStatus("Approved")}>
+                    <Check className="w-3.5 h-3.5 mr-1" /> Approve Entry
+                  </Button>
+                  <Button variant="outline" className="flex-1 border-destructive text-destructive hover:bg-destructive/10 text-xs h-9" onClick={() => handleSetStatus("Rejected")}>
+                    <X className="w-3.5 h-3.5 mr-1" /> Reject
+                  </Button>
+                </div>
+              ) : (
+                <div className="text-[11px] text-muted-foreground bg-muted p-2 rounded leading-normal">
+                  Your corporate role is set as **{session?.role || "Maker"}**. Maker accounts cannot self-approve entries.
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Audit trail */}
+          <Card className="p-5">
+            <h3 className="font-display text-sm font-bold text-navy mb-4">Audit History</h3>
+            <ol className="relative border-l border-border pl-4 space-y-4 text-xs">
+              <BeneficiaryAuditItem time={String(record.createdAt)} actor="Maker" action="Beneficiary entry created" />
+              {record.updatedAt && record.updatedAt !== record.createdAt && (
+                <BeneficiaryAuditItem time={String(record.updatedAt)} actor="Maker" action="Entry modified" />
+              )}
+              {record.status === "Approved" && (
+                <BeneficiaryAuditItem time={String(record.updatedAt)} actor="Checker" action="Authorized & Activated" />
+              )}
+              {record.status === "Rejected" && (
+                <BeneficiaryAuditItem time={String(record.updatedAt)} actor="Checker" action="Entry Rejected" />
+              )}
+            </ol>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BeneficiaryAuditItem({ time, actor, action }: { time: string; actor: string; action: string }) {
+  return (
+    <li className="relative pl-1">
+      <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-gold" />
+      <div className="text-sm font-medium text-foreground">{action}</div>
+      <div className="text-xs text-muted-foreground">
+        {new Date(time).toLocaleString()} · {actor}
+      </div>
+    </li>
+  );
+}
+
+/* ====================== BILL PAY MODULE ====================== */
+
+const BILL_CATEGORIES = [
+  {
+    id: "recharge",
+    label: "Mobile Recharge",
+    icon: Smartphone,
+    desc: "Top-up any mobile number across all BD operators instantly.",
+    color: "text-blue-500",
+    bg: "bg-blue-50 dark:bg-blue-950/30",
+    border: "border-blue-200 dark:border-blue-800",
+    operators: ["Grameenphone", "Robi", "Banglalink", "Teletalk", "Airtel"],
+  },
+  {
+    id: "own-card",
+    label: "Own CC Bill",
+    icon: CreditCard,
+    desc: "Instantly settle your SJIBL corporate credit card outstanding.",
+    color: "text-navy",
+    bg: "bg-navy/5",
+    border: "border-navy/20",
+    operators: [],
+  },
+  {
+    id: "other-card",
+    label: "Other Bank CC",
+    icon: Receipt,
+    desc: "Pay credit card bills for cards issued by any other bank.",
+    color: "text-purple-600",
+    bg: "bg-purple-50 dark:bg-purple-950/30",
+    border: "border-purple-200 dark:border-purple-800",
+    operators: ["Brac Bank CC", "Dutch-Bangla CC", "Prime Bank CC", "Eastern Bank CC", "IFIC Bank CC", "Islami Bank CC", "City Bank CC"],
+  },
+  {
+    id: "utility",
+    label: "Utility Bill",
+    icon: Zap,
+    desc: "Pay electricity, gas, water, internet, and other utility bills.",
+    color: "text-gold",
+    bg: "bg-gold/5",
+    border: "border-gold/30",
+    operators: ["DESCO", "DPDC", "BREB", "Titas Gas", "Bakhrabad Gas", "WASA Dhaka", "WASA CTG", "Jalalabad Gas"],
+  },
+];
+
+const BILL_PAY_EXTRA_HISTORY = [
+  { id: "BP-201", biller: "DESCO", billerCategory: "Utility", consumerNo: "ACC-771122", amount: 14200, status: "Approved", createdAt: new Date(Date.now() - 2 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 2 * 86400000).toISOString() },
+  { id: "BP-203", biller: "Titas Gas", billerCategory: "Utility", consumerNo: "GTD-44201", amount: 3800, status: "Approved", createdAt: new Date(Date.now() - 5 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 5 * 86400000).toISOString() },
+  { id: "BP-204", biller: "Brac Bank CC", billerCategory: "Credit Card (Other)", consumerNo: "4521-XXXX-XXXX-9901", amount: 45000, status: "Approved", createdAt: new Date(Date.now() - 7 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 7 * 86400000).toISOString() },
+];
+
+const OWN_CARDS = [
+  { id: "4521-XXXX-XXXX-8830", label: "Visa Corporate Gold — *8830 (Outstanding: BDT 2,45,000)" },
+  { id: "4521-XXXX-XXXX-1104", label: "Mastercard Corporate Platinum — *1104 (Outstanding: BDT 4,85,000)" },
+];
+
+const OWN_CARD_OUTSTANDING: Record<string, number> = {
+  "4521-XXXX-XXXX-8830": 245000,
+  "4521-XXXX-XXXX-1104": 485000,
+};
+
+function BillPayDashboardView() {
+  const navigate = useNavigate();
+  const payments = list("bill-pay");
+  const allPayments = [...BILL_PAY_EXTRA_HISTORY, ...payments].sort(
+    (a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime()
+  );
+
+  const totalPaid = useMemo(() =>
+    payments.filter(p => p.status === "Approved").reduce((s, p) => s + Number(p.amount || 0), 0)
+  , [payments]);
+
+  const pending = payments.filter(p => p.status === "Pending").length;
+  const thisMonth = allPayments.filter(p => {
+    const d = new Date(String(p.createdAt));
+    const now = new Date();
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }).length;
+
+  const recentHistory = allPayments.slice(0, 6);
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">Bill Pay</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Shahjalal Islami Bank PLC</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Bill Payment Center</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-xl">
+            Recharge mobile numbers, settle credit card bills, and pay utility invoices with Maker–Checker compliance.
+          </p>
+        </div>
+        <Button variant="outline" asChild>
+          <Link to="/app/$" params={{ _splat: "approval" }}>
+            <CheckSquare className="w-4 h-4 mr-2" /> View Pending Approvals
+          </Link>
+        </Button>
+      </div>
+
+      {/* KPI Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Total Bills Paid</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">{payments.filter(p => p.status === "Approved").length + 3}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Approved payments</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Total Amount</div>
+          <div className="font-display text-2xl font-bold text-foreground mt-2">BDT {(totalPaid + 63000).toLocaleString()}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Settled this period</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">This Month</div>
+          <div className="font-display text-2xl font-bold text-foreground mt-2">{thisMonth}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Payments initiated</div>
+        </Card>
+        <Card className={`p-5 ${pending > 0 ? "bg-warning/5 border-warning/30" : ""}`}>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Pending Checker</div>
+          <div className={`font-display text-2xl font-bold mt-2 ${pending > 0 ? "text-warning animate-pulse" : "text-success"}`}>{pending}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Awaiting authorization</div>
+        </Card>
+      </div>
+
+      {/* Bill Category Tiles */}
+      <div>
+        <h2 className="font-display text-xl font-bold text-navy mb-4">Select Payment Type</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {BILL_CATEGORIES.map(cat => {
+            const Icon = cat.icon;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => navigate({ to: "/app/$", params: { _splat: `bill-pay/new/${cat.id}` } })}
+                className={`group rounded-xl border-2 p-5 text-left transition-all hover:shadow-lg hover:scale-[1.02] active:scale-100 cursor-pointer w-full ${cat.bg} ${cat.border}`}
+              >
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center mb-4 group-hover:scale-110 transition-transform border ${cat.border} ${cat.bg}`}>
+                  <Icon className={`w-5 h-5 ${cat.color}`} />
+                </div>
+                <div className={`font-display font-bold text-base ${cat.color} mb-1`}>{cat.label}</div>
+                <p className="text-xs text-muted-foreground leading-relaxed">{cat.desc}</p>
+                <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-muted-foreground group-hover:text-foreground transition-colors">
+                  Pay Now <ChevronRight className="w-3.5 h-3.5" />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Recent History */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-display text-xl font-bold text-navy">Recent Payments</h2>
+        </div>
+        <Card className="overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30">
+                <TableHead className="text-[11px] uppercase tracking-wide">Reference</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Biller / Category</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Consumer No.</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide text-right">Amount (BDT)</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Status</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {recentHistory.map(p => (
+                <TableRow key={p.id} className="hover:bg-muted/10">
+                  <TableCell className="font-mono text-xs font-bold text-navy">{String(p.id)}</TableCell>
+                  <TableCell>
+                    <div className="text-sm font-medium">{String(p.biller)}</div>
+                    <div className="text-[10px] text-muted-foreground">{String(p.billerCategory)}</div>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{String(p.consumerNo)}</TableCell>
+                  <TableCell className="text-right font-mono font-semibold">{Number(p.amount).toLocaleString()}</TableCell>
+                  <TableCell>{statusBadge(String(p.status))}</TableCell>
+                  <TableCell className="text-right">
+                    <Button size="sm" variant="ghost" asChild>
+                      <Link to="/app/$" params={{ _splat: `bill-pay/view/${p.id}` }}>
+                        <Eye className="w-3.5 h-3.5" />
+                      </Link>
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function BillPayFormView({ billType }: { billType: string }) {
+  const navigate = useNavigate();
+  const cat = BILL_CATEGORIES.find(c => c.id === billType) || BILL_CATEGORIES[3];
+  const Icon = cat.icon;
+
+  const [fromAccount, setFromAccount] = useState(OWN_ACCOUNTS[0]?.value || "");
+  const [amount, setAmount] = useState("");
+  const [narration, setNarration] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  // Recharge
+  const [mobileNo, setMobileNo] = useState("");
+  const [operator, setOperator] = useState("");
+  const [rechargeType, setRechargeType] = useState("prepaid");
+
+  // Own CC
+  const [ownCard, setOwnCard] = useState(OWN_CARDS[0]?.id || "");
+  const [payType, setPayType] = useState("full");
+
+  // Other CC
+  const [otherBank, setOtherBank] = useState("");
+  const [otherCardNo, setOtherCardNo] = useState("");
+  const [otherHolderName, setOtherHolderName] = useState("");
+
+  // Utility
+  const [utilityBiller, setUtilityBiller] = useState("");
+  const [consumerNo, setConsumerNo] = useState("");
+  const [billMonth, setBillMonth] = useState("");
+
+  // Set default amount when own card changes
+  const ownCardOutstanding = OWN_CARD_OUTSTANDING[ownCard] || 0;
+
+  useMemo(() => {
+    if (billType === "own-card") {
+      if (payType === "full") setAmount(String(ownCardOutstanding));
+      else if (payType === "minimum") setAmount(String(Math.round(ownCardOutstanding * 0.05)));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownCard, payType]);
+
+  const isValid = useMemo(() => {
+    if (!fromAccount || !amount || isNaN(Number(amount)) || Number(amount) <= 0) return false;
+    if (billType === "recharge") return !!mobileNo && !!operator;
+    if (billType === "own-card") return !!ownCard;
+    if (billType === "other-card") return !!otherBank && !!otherCardNo && !!otherHolderName;
+    if (billType === "utility") return !!utilityBiller && !!consumerNo;
+    return true;
+  }, [billType, fromAccount, amount, mobileNo, operator, ownCard, otherBank, otherCardNo, otherHolderName, utilityBiller, consumerNo]);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!isValid) { toast.error("Please fill all required fields."); return; }
+    setSubmitting(true);
+
+    let biller = "";
+    let billerCategory = "";
+    let consumer = "";
+
+    if (billType === "recharge") {
+      biller = operator;
+      billerCategory = "Telecom / Recharge";
+      consumer = mobileNo;
+    } else if (billType === "own-card") {
+      biller = `SJIBL — ${ownCard}`;
+      billerCategory = "Credit Card (Own)";
+      consumer = ownCard;
+    } else if (billType === "other-card") {
+      biller = otherBank;
+      billerCategory = "Credit Card (Other)";
+      consumer = otherCardNo;
+    } else {
+      biller = utilityBiller;
+      billerCategory = "Utility";
+      consumer = consumerNo;
+    }
+
+    const now = new Date().toISOString();
+    const newId = `BP-${Date.now().toString(36).toUpperCase()}`;
+    const rows = JSON.parse(localStorage.getItem("sjibl.ctb.v2.bill-pay") || "[]");
+    const newRec = {
+      id: newId,
+      createdAt: now,
+      updatedAt: now,
+      status: "Pending",
+      reference: newId,
+      billerCategory,
+      biller,
+      consumerNo: consumer,
+      billMonth: billMonth || new Date().toLocaleDateString("en-BD", { month: "long", year: "numeric" }),
+      amount: Number(amount),
+      currency: "BDT",
+      fromAccount,
+      narration: narration || `${billerCategory} payment to ${biller}`,
+    };
+    rows.unshift(newRec);
+    localStorage.setItem("sjibl.ctb.v2.bill-pay", JSON.stringify(rows));
+
+    // Approval record
+    const appRows = JSON.parse(localStorage.getItem("sjibl.ctb.v2.approval") || "[]");
+    const session = getSession();
+    appRows.unshift({
+      id: `TXN-${Math.floor(10000 + Math.random() * 90000)}`,
+      createdAt: now,
+      updatedAt: now,
+      status: "Pending",
+      ref: newId,
+      moduleTitle: "Bill Pay",
+      details: `Bill Payment to ${biller} (${consumer}, BDT ${Number(amount).toLocaleString()})`,
+      maker: session?.username || "maker",
+      risk: "Low",
+      amount: Number(amount),
+      sourceSlug: "bill-pay",
+      remarks: "Awaiting maker-checker verification.",
+    });
+    localStorage.setItem("sjibl.ctb.v2.approval", JSON.stringify(appRows));
+
+    setTimeout(() => {
+      toast.success("Bill payment submitted for Checker authorization!");
+      navigate({ to: "/app/$", params: { _splat: "bill-pay" } });
+    }, 700);
+  }
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "bill-pay" }} className="hover:text-navy">Bill Pay</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">{cat.label}</span>
+      </nav>
+
+      <div className="flex items-center gap-4">
+        <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "bill-pay" } })}>
+          <ArrowLeft className="w-4 h-4" />
+        </Button>
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Bill Pay</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">{cat.label}</h1>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="lg:col-span-2 space-y-5">
+          {/* Debit Account */}
+          <Card className="p-6 space-y-4">
+            <h2 className="font-display text-lg font-bold text-navy flex items-center gap-2">
+              <Wallet className="w-5 h-5 text-gold" /> Debit Account
+            </h2>
+            <div className="space-y-2">
+              <Label htmlFor="bp-from">Debit From Account <span className="text-destructive">*</span></Label>
+              <Select value={fromAccount} onValueChange={setFromAccount}>
+                <SelectTrigger id="bp-from">
+                  <SelectValue placeholder="Select Account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {OWN_ACCOUNTS.map(a => (
+                    <SelectItem key={a.value} value={a.value}>{a.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </Card>
+
+          {/* Biller Details */}
+          <Card className="p-6 space-y-5">
+            <h2 className="font-display text-lg font-bold text-navy flex items-center gap-2">
+              <Icon className={`w-5 h-5 ${cat.color}`} /> {cat.label} Details
+            </h2>
+
+            {billType === "recharge" && (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="bp-operator">Mobile Operator <span className="text-destructive">*</span></Label>
+                    <Select value={operator} onValueChange={setOperator}>
+                      <SelectTrigger id="bp-operator">
+                        <SelectValue placeholder="Select Operator" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cat.operators.map(op => (
+                          <SelectItem key={op} value={op}>{op}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bp-rechtype">Recharge Type</Label>
+                    <Select value={rechargeType} onValueChange={setRechargeType}>
+                      <SelectTrigger id="bp-rechtype">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="prepaid">Prepaid Top-Up</SelectItem>
+                        <SelectItem value="postpaid">Postpaid Bill</SelectItem>
+                        <SelectItem value="data">Data Pack</SelectItem>
+                        <SelectItem value="bundle">Bundle Offer</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bp-mobile">Mobile Number <span className="text-destructive">*</span></Label>
+                  <Input id="bp-mobile" placeholder="e.g. 01711-000-000" value={mobileNo} onChange={e => setMobileNo(e.target.value)} />
+                </div>
+              </>
+            )}
+
+            {billType === "own-card" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="bp-owncard">Select Your SJIBL Card <span className="text-destructive">*</span></Label>
+                  <Select value={ownCard} onValueChange={v => { setOwnCard(v); setPayType("full"); }}>
+                    <SelectTrigger id="bp-owncard">
+                      <SelectValue placeholder="Select Card" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {OWN_CARDS.map(c => (
+                        <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="rounded-lg bg-muted p-4 flex justify-between items-center">
+                  <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Outstanding Balance</div>
+                  <div className="font-display text-xl font-bold text-navy">
+                    BDT {ownCardOutstanding.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Payment Option</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["full", "minimum", "custom"] as const).map(pt => (
+                      <button
+                        type="button"
+                        key={pt}
+                        onClick={() => {
+                          setPayType(pt);
+                          if (pt === "full") setAmount(String(ownCardOutstanding));
+                          else if (pt === "minimum") setAmount(String(Math.round(ownCardOutstanding * 0.05)));
+                          else setAmount("");
+                        }}
+                        className={`p-2.5 rounded-lg border text-xs font-semibold capitalize transition-all ${
+                          payType === pt ? "border-gold bg-gold/10 text-gold" : "border-border text-muted-foreground hover:border-gold/50"
+                        }`}
+                      >
+                        {pt === "full" ? "Full Amount" : pt === "minimum" ? "Min. Due (5%)" : "Custom"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            {billType === "other-card" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="bp-otherbank">Issuing Bank <span className="text-destructive">*</span></Label>
+                  <Select value={otherBank} onValueChange={setOtherBank}>
+                    <SelectTrigger id="bp-otherbank">
+                      <SelectValue placeholder="Select Issuing Bank" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cat.operators.map(op => (
+                        <SelectItem key={op} value={op}>{op}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="bp-cardno">Credit Card Number <span className="text-destructive">*</span></Label>
+                    <Input
+                      id="bp-cardno"
+                      placeholder="e.g. 4521-XXXX-XXXX-0000"
+                      value={otherCardNo}
+                      onChange={e => setOtherCardNo(e.target.value)}
+                      maxLength={19}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bp-holder">Cardholder Name <span className="text-destructive">*</span></Label>
+                    <Input id="bp-holder" placeholder="Name on card" value={otherHolderName} onChange={e => setOtherHolderName(e.target.value)} />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {billType === "utility" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="bp-ubiller">Select Utility Biller <span className="text-destructive">*</span></Label>
+                  <Select value={utilityBiller} onValueChange={setUtilityBiller}>
+                    <SelectTrigger id="bp-ubiller">
+                      <SelectValue placeholder="Select Biller" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cat.operators.map(op => (
+                        <SelectItem key={op} value={op}>{op}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="bp-consumer">Consumer / Account No. <span className="text-destructive">*</span></Label>
+                    <Input id="bp-consumer" placeholder="e.g. ACC-771122" value={consumerNo} onChange={e => setConsumerNo(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bp-month">Bill Month</Label>
+                    <Input id="bp-month" type="month" value={billMonth} onChange={e => setBillMonth(e.target.value)} />
+                  </div>
+                </div>
+              </>
+            )}
+          </Card>
+
+          {/* Amount & Narration */}
+          <Card className="p-6 space-y-4">
+            <h2 className="font-display text-lg font-bold text-navy flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-gold" /> Payment Details
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="bp-amount">Amount (BDT) <span className="text-destructive">*</span></Label>
+                <Input
+                  id="bp-amount"
+                  type="number"
+                  min="1"
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  disabled={billType === "own-card" && payType !== "custom"}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bp-narr">Narration / Reference</Label>
+                <Input id="bp-narr" placeholder="Optional note" value={narration} onChange={e => setNarration(e.target.value)} />
+              </div>
+            </div>
+          </Card>
+
+          {/* Submit */}
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="outline" onClick={() => navigate({ to: "/app/$", params: { _splat: "bill-pay" } })}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={!isValid || submitting}
+              className="bg-gold text-gold-foreground hover:bg-gold/90 font-semibold gap-2 min-w-[180px]"
+            >
+              {submitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              Submit for Approval
+            </Button>
+          </div>
+        </form>
+
+        {/* Right Panel */}
+        <div className="space-y-4">
+          {/* Category Info */}
+          <Card className={`p-5 border-2 ${cat.bg} ${cat.border}`}>
+            <div className={`w-10 h-10 rounded-lg border ${cat.border} flex items-center justify-center mb-3`}>
+              <Icon className={`w-5 h-5 ${cat.color}`} />
+            </div>
+            <div className={`font-display font-bold text-lg ${cat.color}`}>{cat.label}</div>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{cat.desc}</p>
+          </Card>
+
+          {/* Workflow */}
+          <Card className="p-5 space-y-4">
+            <h3 className="text-sm font-bold text-navy">Payment Workflow</h3>
+            <ol className="space-y-3 text-xs">
+              {[
+                { step: "1", label: "Maker Initiates", desc: "You fill and submit this form" },
+                { step: "2", label: "Checker Review", desc: "Authorized user verifies details" },
+                { step: "3", label: "Authorization", desc: "Checker approves or rejects" },
+                { step: "4", label: "Settlement", desc: "SJIBL CBS processes payment instantly" },
+              ].map(s => (
+                <li key={s.step} className="flex items-start gap-3">
+                  <div className="w-5 h-5 rounded-full bg-gold/10 text-gold font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">{s.step}</div>
+                  <div>
+                    <div className="font-semibold text-foreground">{s.label}</div>
+                    <div className="text-muted-foreground">{s.desc}</div>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </Card>
+
+          {/* Other Categories */}
+          <Card className="p-5 space-y-1">
+            <h3 className="text-sm font-bold text-navy mb-3">Other Payment Types</h3>
+            {BILL_CATEGORIES.filter(c => c.id !== billType).map(c => {
+              const CIcon = c.icon;
+              return (
+                <Link
+                  key={c.id}
+                  to="/app/$"
+                  params={{ _splat: `bill-pay/new/${c.id}` }}
+                  className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted/60 transition-colors group"
+                >
+                  <div className={`w-7 h-7 rounded-lg ${c.bg} flex items-center justify-center border ${c.border}`}>
+                    <CIcon className={`w-3.5 h-3.5 ${c.color}`} />
+                  </div>
+                  <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground">{c.label}</span>
+                  <ChevronRight className="w-3.5 h-3.5 ml-auto text-muted-foreground group-hover:text-foreground" />
+                </Link>
+              );
+            })}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BillPayDetailView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const session = getSession();
+  const isChecker = ["Checker", "Approver", "Admin"].includes(session?.role || "Maker");
+
+  function handleSetStatus(status: string) {
+    update("bill-pay", record.id, { status });
+    toast.success(`Payment ${status === "Approved" ? "approved and processed" : "rejected"} successfully!`);
+    navigate({ to: "/app/$", params: { _splat: `bill-pay/view/${record.id}` } });
+  }
+
+  const catInfo = BILL_CATEGORIES.find(c => {
+    const cat = String(record.billerCategory || "").toLowerCase();
+    return cat.includes("recharge") || cat.includes("telecom") ? c.id === "recharge"
+      : cat.includes("own") ? c.id === "own-card"
+      : cat.includes("other") || cat.includes("credit") ? c.id === "other-card"
+      : c.id === "utility";
+  }) || BILL_CATEGORIES[3];
+  const Icon = catInfo.icon;
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "bill-pay" }} className="hover:text-navy">Bill Pay</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.id}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "bill-pay" } })}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-gold font-bold">{record.billerCategory}</div>
+            <h1 className="font-display text-3xl font-bold text-navy mt-0.5">{record.biller}</h1>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="font-mono text-xs text-muted-foreground">{record.id}</span>
+              {statusBadge(String(record.status))}
+            </div>
+          </div>
+        </div>
+        {record.status === "Approved" && (
+          <Button variant="outline" onClick={() => toast.info("Receipt downloaded (demo)")}>
+            <Download className="w-4 h-4 mr-2" /> Download Receipt
+          </Button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Details */}
+        <div className="lg:col-span-2 space-y-6">
+          <Card className="p-6">
+            <h2 className="font-display text-lg font-bold text-navy mb-5 flex items-center gap-2">
+              <Icon className={`w-5 h-5 ${catInfo.color}`} /> Payment Details
+            </h2>
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Biller / Operator</dt>
+                <dd className="mt-1 text-sm font-semibold text-foreground">{record.biller}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Category</dt>
+                <dd className="mt-1 text-sm font-medium">{record.billerCategory}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Consumer / Card No.</dt>
+                <dd className="mt-1 text-sm font-mono font-bold text-navy">{record.consumerNo}</dd>
+              </div>
+              {record.billMonth && (
+                <div>
+                  <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Bill Month</dt>
+                  <dd className="mt-1 text-sm font-medium">{record.billMonth}</dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Debit Account</dt>
+                <dd className="mt-1 text-sm font-mono">{record.fromAccount || "0123100001 — SJIBL Current"}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Currency</dt>
+                <dd className="mt-1">
+                  <Badge variant="outline" className="bg-navy/5 text-navy border-navy/20 font-bold">BDT</Badge>
+                </dd>
+              </div>
+              {record.narration && (
+                <div className="sm:col-span-2">
+                  <dt className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Narration</dt>
+                  <dd className="mt-1 text-sm text-foreground">{record.narration}</dd>
+                </div>
+              )}
+            </dl>
+          </Card>
+
+          {/* Amount Summary */}
+          <Card className="p-6 bg-navy/[0.03] border-navy/10">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Payment Amount</div>
+                <div className="font-display text-4xl font-bold text-navy mt-2">
+                  BDT {Number(record.amount).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  Initiated: {new Date(String(record.createdAt)).toLocaleString()}
+                </div>
+              </div>
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
+                record.status === "Approved" ? "bg-success/10" :
+                record.status === "Rejected" ? "bg-destructive/10" : "bg-warning/10"
+              }`}>
+                {record.status === "Approved" ? <CheckCircle2 className="w-8 h-8 text-success" /> :
+                 record.status === "Rejected" ? <X className="w-8 h-8 text-destructive" /> :
+                 <Clock className="w-8 h-8 text-warning" />}
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        {/* Right Panel */}
+        <div className="space-y-5">
+          {record.status === "Pending" && (
+            <Card className="p-5 border border-warning bg-warning/5 space-y-4">
+              <div className="flex items-center gap-2">
+                <CheckSquare className="w-5 h-5 text-warning" />
+                <h3 className="font-semibold text-sm text-warning">Checker Authorization</h3>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Verify biller, consumer number, and debit account before authorizing.
+              </p>
+              <div className="space-y-2 border-y border-border py-3">
+                {[
+                  { id: "chk-biller-dp", label: "Biller name and category confirmed" },
+                  { id: "chk-consumer-dp", label: "Consumer / card number verified" },
+                  { id: "chk-amount-dp", label: "Payment amount authorized within limit" },
+                ].map(c => (
+                  <div key={c.id} className="flex items-start gap-2 text-xs">
+                    <input type="checkbox" className="mt-0.5 cursor-pointer" id={c.id} defaultChecked />
+                    <label htmlFor={c.id} className="text-muted-foreground cursor-pointer select-none">{c.label}</label>
+                  </div>
+                ))}
+              </div>
+              {isChecker ? (
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    className="flex-1 bg-success hover:bg-success/90 text-white font-semibold text-xs h-9"
+                    onClick={() => handleSetStatus("Approved")}
+                  >
+                    <Check className="w-3.5 h-3.5 mr-1" /> Approve
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-destructive text-destructive hover:bg-destructive/10 text-xs h-9"
+                    onClick={() => handleSetStatus("Rejected")}
+                  >
+                    <X className="w-3.5 h-3.5 mr-1" /> Reject
+                  </Button>
+                </div>
+              ) : (
+                <div className="text-[11px] text-muted-foreground bg-muted p-2 rounded leading-normal">
+                  Your role is <strong>{session?.role || "Maker"}</strong>. Only Checker accounts can authorize payments.
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Audit */}
+          <Card className="p-5">
+            <h3 className="font-display text-sm font-bold text-navy mb-4">Audit Trail</h3>
+            <ol className="relative border-l border-border pl-4 space-y-4 text-xs">
+              <li className="relative pl-1">
+                <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-gold" />
+                <div className="text-sm font-medium">Payment Initiated</div>
+                <div className="text-xs text-muted-foreground">
+                  {new Date(String(record.createdAt)).toLocaleString()} · Maker
+                </div>
+              </li>
+              {record.status === "Approved" && (
+                <li className="relative pl-1">
+                  <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-success" />
+                  <div className="text-sm font-medium text-success">Approved & Settled</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(String(record.updatedAt)).toLocaleString()} · Checker
+                  </div>
+                </li>
+              )}
+              {record.status === "Rejected" && (
+                <li className="relative pl-1">
+                  <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-destructive" />
+                  <div className="text-sm font-medium text-destructive">Payment Rejected</div>
+                  <div className="text-xs text-muted-foreground">
+                    {new Date(String(record.updatedAt)).toLocaleString()} · Checker
+                  </div>
+                </li>
+              )}
+              {record.status === "Pending" && (
+                <li className="relative pl-1">
+                  <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-warning animate-pulse" />
+                  <div className="text-sm font-medium text-warning">Awaiting Authorization</div>
+                  <div className="text-xs text-muted-foreground">Pending Checker action</div>
+                </li>
+              )}
+            </ol>
+          </Card>
+
+          {/* Quick Actions */}
+          <Card className="p-5 space-y-3">
+            <h3 className="font-display text-sm font-bold text-navy">Quick Actions</h3>
+            <Button className="w-full bg-gold text-gold-foreground hover:bg-gold/90 gap-2" asChild>
+              <Link to="/app/$" params={{ _splat: `bill-pay/new/${catInfo.id}` }}>
+                <RefreshCw className="w-4 h-4" /> Pay Again
+              </Link>
+            </Button>
+            <Button variant="outline" className="w-full gap-2" asChild>
+              <Link to="/app/$" params={{ _splat: "bill-pay" }}>
+                <History className="w-4 h-4" /> Payment History
+              </Link>
+            </Button>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ==================== VIEW IMPORT LC MODULE ==================== */
+
+function ImportLCDashboardView() {
+  const navigate = useNavigate();
+  const records = list("import-lc");
+  const [query, setQuery] = useState("");
+  const [lcTypeFilter, setLcTypeFilter] = useState("all");
+  const [expiryFilter, setExpiryFilter] = useState("all");
+
+  const now = new Date();
+
+  const filtered = useMemo(() => {
+    let rows = [...records];
+
+    // LC Type filter
+    if (lcTypeFilter !== "all") {
+      rows = rows.filter((r) =>
+        String(r.lcType || "").toLowerCase().includes(lcTypeFilter.toLowerCase())
+      );
+    }
+
+    // Expiry filter
+    if (expiryFilter === "30days") {
+      const boundary = new Date(now.getTime() + 30 * 86400000);
+      rows = rows.filter((r) => {
+        const d = new Date(String(r.expiryDate));
+        return d >= now && d <= boundary;
+      });
+    } else if (expiryFilter === "90days") {
+      const boundary = new Date(now.getTime() + 90 * 86400000);
+      rows = rows.filter((r) => {
+        const d = new Date(String(r.expiryDate));
+        return d >= now && d <= boundary;
+      });
+    }
+
+    // Text search
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      rows = rows.filter((r) =>
+        Object.values(r).some((v) => String(v ?? "").toLowerCase().includes(q))
+      );
+    }
+
+    return rows;
+  }, [records, query, lcTypeFilter, expiryFilter]);
+
+  // Aggregates
+  const totalUSD = useMemo(() =>
+    records.filter((r) => r.currency === "USD").reduce((a, r) => a + Number(r.lcAmount || 0), 0),
+    [records]
+  );
+  const totalEUR = useMemo(() =>
+    records.filter((r) => r.currency === "EUR").reduce((a, r) => a + Number(r.lcAmount || 0), 0),
+    [records]
+  );
+  const expiringSoon = useMemo(() => {
+    const boundary = new Date(now.getTime() + 30 * 86400000);
+    return records.filter((r) => {
+      const d = new Date(String(r.expiryDate));
+      return d >= now && d <= boundary;
+    }).length;
+  }, [records]);
+
+  const lcTypeBadgeColor = (t: string) => {
+    if (t?.includes("Sight")) return "bg-blue-50 text-blue-700 border-blue-200";
+    if (t?.includes("UPAS")) return "bg-purple-50 text-purple-700 border-purple-200";
+    if (t?.includes("Usance")) return "bg-amber-50 text-amber-700 border-amber-200";
+    if (t?.includes("Back")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    return "bg-muted text-muted-foreground";
+  };
+
+  return (
+    <div className="space-y-6">
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-semibold">View Import LC</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="text-xs uppercase tracking-widest text-gold font-bold">Trade Finance</div>
+          <h1 className="font-display text-3xl font-bold text-navy mt-0.5">Import Letters of Credit</h1>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            Search, view, and monitor all import LC records including SWIFT messages, amendments, bills, and advices.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => toast.success("LC PDF report exported.")}><FileText className="w-4 h-4" />Export PDF</Button>
+          <Button variant="outline" onClick={() => toast.success("LC Excel report exported.")}><Download className="w-4 h-4" />Export Excel</Button>
+        </div>
+      </div>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Total LCs</div>
+          <div className="font-display text-3xl font-bold text-navy mt-2">{records.length}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{filtered.length} matching search</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">USD LC Value</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">
+            USD {totalUSD.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Across Sight & UPAS LCs</div>
+        </Card>
+        <Card className="p-5">
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">EUR LC Value</div>
+          <div className="font-display text-2xl font-bold text-navy mt-2">
+            EUR {totalEUR.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Across Chemical & Goods LCs</div>
+        </Card>
+        <Card className={`p-5 ${expiringSoon > 0 ? "border-amber-300 bg-amber-50/30" : ""}`}>
+          <div className="text-xs uppercase tracking-wider text-muted-foreground">Expiring in 30 Days</div>
+          <div className={`font-display text-3xl font-bold mt-2 ${expiringSoon > 0 ? "text-amber-600" : "text-foreground"}`}>
+            {expiringSoon}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Requires attention</div>
+        </Card>
+      </div>
+
+      {/* Search & Filters */}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="import-lc-search"
+              placeholder="Search LC No., Beneficiary, SWIFT Ref…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Select value={lcTypeFilter} onValueChange={setLcTypeFilter}>
+            <SelectTrigger className="w-40 text-xs" id="lc-type-filter">
+              <SelectValue placeholder="LC Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All LC Types</SelectItem>
+              <SelectItem value="Sight">Sight LC</SelectItem>
+              <SelectItem value="Usance">Usance LC</SelectItem>
+              <SelectItem value="UPAS">UPAS LC</SelectItem>
+              <SelectItem value="Back">Back-to-Back</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={expiryFilter} onValueChange={setExpiryFilter}>
+            <SelectTrigger className="w-44 text-xs" id="expiry-filter">
+              <SelectValue placeholder="Expiry Filter" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Expiry Dates</SelectItem>
+              <SelectItem value="30days">Expiring in 30 Days</SelectItem>
+              <SelectItem value="90days">Expiring in 90 Days</SelectItem>
+            </SelectContent>
+          </Select>
+          {(query || lcTypeFilter !== "all" || expiryFilter !== "all") && (
+            <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setLcTypeFilter("all"); setExpiryFilter("all"); }}>
+              <X className="w-3.5 h-3.5" /> Clear
+            </Button>
+          )}
+        </div>
+      </Card>
+
+      {/* LC Table */}
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>LC Number</TableHead>
+              <TableHead>LC Type</TableHead>
+              <TableHead>Beneficiary</TableHead>
+              <TableHead>Country</TableHead>
+              <TableHead className="text-right">LC Amount</TableHead>
+              <TableHead>Opening Date</TableHead>
+              <TableHead>Expiry Date</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-12">
+                  No Import LCs found matching your search criteria.
+                </TableCell>
+              </TableRow>
+            ) : (
+              filtered.map((r) => {
+                const expiry = new Date(String(r.expiryDate));
+                const daysToExpiry = Math.ceil((expiry.getTime() - now.getTime()) / 86400000);
+                const isExpiringSoon = daysToExpiry > 0 && daysToExpiry <= 30;
+                return (
+                  <TableRow key={r.id} className="hover:bg-muted/30 cursor-pointer" onClick={() => navigate({ to: "/app/$", params: { _splat: `import-lc/view/${r.id}` } })}>
+                    <TableCell className="font-mono text-sm font-semibold text-navy">
+                      {String(r.lcNumber)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={`text-[10px] font-semibold ${lcTypeBadgeColor(String(r.lcType))}`}>
+                        {String(r.lcType)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">{String(r.beneficiaryName)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {String(r.beneficiaryAddress || "").split(",").pop()?.trim() || "—"}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-semibold">
+                      {String(r.currency)} {Number(r.lcAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{String(r.openingDate)}</TableCell>
+                    <TableCell className="text-xs">
+                      <span className={isExpiringSoon ? "text-amber-600 font-semibold" : ""}>
+                        {String(r.expiryDate)}
+                        {isExpiringSoon && <span className="ml-1 text-[10px] text-amber-500">({daysToExpiry}d)</span>}
+                      </span>
+                    </TableCell>
+                    <TableCell>{statusBadge(String(r.status))}</TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" asChild onClick={(e) => e.stopPropagation()}>
+                        <Link to="/app/$" params={{ _splat: `import-lc/view/${r.id}` }}>
+                          <Eye className="w-3.5 h-3.5" /> View
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      {/* Info Banner */}
+      <Card className="p-5 bg-gold/[0.04] border-gold/20">
+        <div className="flex items-start gap-3">
+          <Sparkles className="w-5 h-5 text-gold shrink-0 mt-0.5" />
+          <div>
+            <div className="font-semibold text-sm">Read-Only Trade Finance Module</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Import LC records are sourced from the core trade finance system (Shahjalal Islami Bank CBS). 
+              To open a new LC, use the <Link to="/app/$" params={{ _splat: "lc-initiation" }} className="text-gold hover:underline">LC Initiation</Link> module.
+            </p>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ---- Mock data helpers for Import LC Detail View ---- */
+
+function getAmendments(lcNumber: string) {
+  return [
+    {
+      id: "AMD-001",
+      amendmentNo: "01",
+      date: "2025-06-15",
+      description: "Extension of LC expiry date by 30 days as per beneficiary request.",
+      swiftRef: "MT707-00192",
+      status: "Approved",
+      requestedBy: "Globex Industries Ltd",
+    },
+    {
+      id: "AMD-002",
+      amendmentNo: "02",
+      date: "2025-07-02",
+      description: "Tolerance amended from ±5% to ±10%. Goods description updated with HS code.",
+      swiftRef: "MT707-00228",
+      status: "Pending",
+      requestedBy: "Globex Industries Ltd",
+    },
+  ].filter((_, i) => lcNumber.includes("0992") ? true : i < 1);
+}
+
+function getSwiftMessages(lcNumber: string) {
+  const msgs = [
+    {
+      id: "SW-001", msgType: "MT700", date: "2025-05-10 10:22:00",
+      subject: "Issue of Documentary Credit",
+      from: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      to: "BKCHCNBJXXX (Bank of China, Shanghai)",
+      status: "Sent", body: "Field 27: 1/1 | Field 40A: IRREVOCABLE | Field 20: LC-IMP-2025-0992",
+    },
+    {
+      id: "SW-002", msgType: "MT707", date: "2025-06-15 14:05:00",
+      subject: "Amendment to Documentary Credit",
+      from: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      to: "BKCHCNBJXXX (Bank of China, Shanghai)",
+      status: "Sent", body: "Field 31E: 20250715 | Amendment No: 01",
+    },
+    {
+      id: "SW-003", msgType: "MT710", date: "2025-05-12 09:15:00",
+      subject: "Advice of Third Bank's Documentary Credit",
+      from: "BKCHCNBJXXX (Bank of China, Shanghai)",
+      to: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      status: "Received", body: "Advice of LC issued by SJIBL, confirmed by advising bank.",
+    },
+    {
+      id: "SW-004", msgType: "MT754", date: "2025-08-01 11:30:00",
+      subject: "Advice of Payment / Acceptance / Negotiation",
+      from: "BKCHCNBJXXX (Bank of China, Shanghai)",
+      to: "SJIBBDDHXXX (Shahjalal Islami Bank PLC)",
+      status: "Received", body: "USD 150,000 — Documents presented, accepted for payment.",
+    },
+  ];
+  return lcNumber.includes("0994") ? msgs.slice(0, 2) : msgs;
+}
+
+function getAdviceMessages(lcNumber: string) {
+  return [
+    {
+      id: "ADV-001",
+      date: "2025-05-12",
+      type: "LC Advice",
+      from: "Advising Bank (Bank of China, Shanghai)",
+      to: "Globex Industries Ltd",
+      summary: "Documentary Credit No. LC-IMP-2025-0992 has been advised as per SWIFT MT710. Please review the terms.",
+      status: "Acknowledged",
+    },
+    {
+      id: "ADV-002",
+      date: "2025-06-16",
+      type: "Amendment Advice",
+      from: "SJIBL Trade Finance Desk",
+      to: "Globex Industries Ltd",
+      summary: "Amendment No. 01 to LC No. LC-IMP-2025-0992 has been transmitted to beneficiary's bank.",
+      status: "Acknowledged",
+    },
+  ].filter((_, i) => lcNumber.includes("0994") ? i < 1 : true);
+}
+
+/* ---- ImportLCDetailView ---- */
+
+function ImportLCDetailView({ record }: { record: any }) {
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("summary");
+
+  // Fetch linked import bills
+  const linkedBills = useMemo(() => {
+    const bills = list("import-bill");
+    return bills.filter((b) => String(b.lcNumber) === String(record.lcNumber));
+  }, [record.lcNumber]);
+
+  const amendments = useMemo(() => getAmendments(String(record.lcNumber)), [record.lcNumber]);
+  const swiftMessages = useMemo(() => getSwiftMessages(String(record.lcNumber)), [record.lcNumber]);
+  const adviceMessages = useMemo(() => getAdviceMessages(String(record.lcNumber)), [record.lcNumber]);
+
+  const now = new Date();
+  const expiry = new Date(String(record.expiryDate));
+  const daysToExpiry = Math.ceil((expiry.getTime() - now.getTime()) / 86400000);
+  const isExpired = daysToExpiry < 0;
+  const isExpiringSoon = daysToExpiry >= 0 && daysToExpiry <= 30;
+
+  const lcTypeBadgeColor = (t: string) => {
+    if (t?.includes("Sight")) return "border-blue-300 text-blue-700 bg-blue-50";
+    if (t?.includes("UPAS")) return "border-purple-300 text-purple-700 bg-purple-50";
+    if (t?.includes("Usance")) return "border-amber-300 text-amber-700 bg-amber-50";
+    if (t?.includes("Back")) return "border-emerald-300 text-emerald-700 bg-emerald-50";
+    return "";
+  };
+
+  const fieldRow = (label: string, value: string | undefined, mono = false) => (
+    <div className="flex justify-between items-start gap-4 py-2 border-b border-border last:border-0">
+      <span className="text-xs text-muted-foreground shrink-0 min-w-[140px]">{label}</span>
+      <span className={`text-sm font-medium text-right ${mono ? "font-mono" : ""}`}>{value || "—"}</span>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Breadcrumb */}
+      <nav className="text-xs text-muted-foreground flex items-center gap-1">
+        <Link to="/app" className="hover:text-navy">Dashboard</Link>
+        <ChevronRight className="w-3 h-3" />
+        <Link to="/app/$" params={{ _splat: "import-lc" }} className="hover:text-navy">Import LC</Link>
+        <ChevronRight className="w-3 h-3" />
+        <span className="text-foreground font-mono">{record.lcNumber}</span>
+      </nav>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="icon" onClick={() => navigate({ to: "/app/$", params: { _splat: "import-lc" } })}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="text-xs uppercase tracking-widest text-gold font-bold">Import LC</div>
+              <Badge variant="outline" className={`text-[10px] font-bold ${lcTypeBadgeColor(String(record.lcType))}`}>
+                {record.lcType}
+              </Badge>
+              {statusBadge(String(record.status))}
+              {isExpired && <Badge variant="outline" className="text-destructive border-destructive text-[10px]">EXPIRED</Badge>}
+              {isExpiringSoon && !isExpired && (
+                <Badge variant="outline" className="text-amber-600 border-amber-400 bg-amber-50 text-[10px]">
+                  Expiring in {daysToExpiry} days
+                </Badge>
+              )}
+            </div>
+            <h1 className="font-display text-2xl font-bold text-navy mt-0.5">{record.lcNumber}</h1>
+            <p className="text-xs text-muted-foreground mt-1 font-mono">
+              SWIFT Ref: {record.swiftReference || "—"} · Opened: {record.openingDate}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" onClick={() => { toast.success("LC copy downloaded as PDF."); }}>
+            <FileText className="w-4 h-4" /> Download LC Copy
+          </Button>
+          <Button variant="outline" onClick={() => { toast.success("LC details exported."); }}>
+            <Download className="w-4 h-4" /> Export
+          </Button>
+        </div>
+      </div>
+
+      {/* Key Metric Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">LC Amount</div>
+          <div className="font-mono font-bold text-lg text-navy mt-1">
+            {record.currency} {Number(record.lcAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Beneficiary</div>
+          <div className="font-semibold text-sm mt-1 truncate">{record.beneficiaryName}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Expiry Date</div>
+          <div className={`font-semibold text-sm mt-1 ${isExpiringSoon && !isExpired ? "text-amber-600" : isExpired ? "text-destructive" : ""}`}>
+            {String(record.expiryDate)}
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Linked Bills</div>
+          <div className="font-bold text-2xl text-navy mt-1">{linkedBills.length}</div>
+        </Card>
+      </div>
+
+      {/* Tabbed Content */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <div className="overflow-x-auto">
+          <TabsList className="min-w-max">
+            <TabsTrigger value="summary" id="tab-lc-summary">LC Summary</TabsTrigger>
+            <TabsTrigger value="details" id="tab-lc-details">LC Details</TabsTrigger>
+            <TabsTrigger value="amendment" id="tab-amendment">
+              Amendment {amendments.length > 0 && <Badge className="ml-1 h-4 text-[10px] px-1 bg-navy text-white">{amendments.length}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="bills" id="tab-bills">
+              Bills {linkedBills.length > 0 && <Badge className="ml-1 h-4 text-[10px] px-1 bg-navy text-white">{linkedBills.length}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="guarantee" id="tab-guarantee">Guarantee</TabsTrigger>
+            <TabsTrigger value="swift" id="tab-swift">
+              SWIFT Messages {swiftMessages.length > 0 && <Badge className="ml-1 h-4 text-[10px] px-1 bg-navy text-white">{swiftMessages.length}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="advice" id="tab-advice">Advice</TabsTrigger>
+            <TabsTrigger value="banks" id="tab-banks">Banks</TabsTrigger>
+          </TabsList>
+        </div>
+
+        {/* ── TAB 1: LC Summary ── */}
+        <TabsContent value="summary" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">LC Identification</h2>
+              {fieldRow("LC Number", String(record.lcNumber), true)}
+              {fieldRow("LC Type", String(record.lcType))}
+              {fieldRow("SWIFT Reference", String(record.swiftReference || "—"), true)}
+              {fieldRow("Status", String(record.status))}
+              {fieldRow("Opening Date", String(record.openingDate))}
+              {fieldRow("Expiry Date", String(record.expiryDate))}
+              {fieldRow("Latest Shipment", String(record.shipmentDate || "—"))}
+            </Card>
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Financial Details</h2>
+              {fieldRow("LC Amount", `${record.currency} ${Number(record.lcAmount).toLocaleString("en-US", { minimumFractionDigits: 2 })}`, true)}
+              {fieldRow("Currency", String(record.currency))}
+              {fieldRow("Tolerance (%)", String(record.tolerance || "5% / -5%"))}
+              {fieldRow("Mode of Payment", String(record.lcType).includes("Usance") || String(record.lcType).includes("UPAS") ? "Deferred / Usance" : "At Sight")}
+              {fieldRow("Applicable Rules", "UCP600 / ISBP 745")}
+              {fieldRow("Partial Shipment", "Permitted")}
+              {fieldRow("Transshipment", "Not Permitted")}
+            </Card>
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Beneficiary Information</h2>
+              {fieldRow("Beneficiary Name", String(record.beneficiaryName))}
+              {fieldRow("Beneficiary Address", String(record.beneficiaryAddress || "—"))}
+              {fieldRow("Country", String(record.beneficiaryAddress || "").split(",").pop()?.trim() || "—")}
+            </Card>
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Applicant Information</h2>
+              {fieldRow("Applicant Name", "Globex Industries Ltd")}
+              {fieldRow("Applicant Address", "House 12, Road 5, Gulshan-1, Dhaka 1212, Bangladesh")}
+              {fieldRow("Applicant Account", "0123100001 — Al-Wadeeah Current")}
+              {fieldRow("Customer CIF", "CIF-GBX-10029")}
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 2: LC Details ── */}
+        <TabsContent value="details" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Goods & Shipment Details</h2>
+              <div className="space-y-3 text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Description of Goods</div>
+                  <p className="text-sm leading-relaxed bg-muted/40 rounded-md p-3">
+                    {String(record.goodsDescription || "—")}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 pt-2">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Port of Loading</div>
+                    <div className="font-semibold">Shanghai / Ningbo</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Port of Discharge</div>
+                    <div className="font-semibold">Chittagong</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Incoterms</div>
+                    <div className="font-semibold">CIF Chittagong</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Latest Shipment</div>
+                    <div className="font-semibold">{String(record.shipmentDate || "—")}</div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+            <Card className="p-6">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Documents Required</h2>
+              <ul className="space-y-2 text-sm">
+                {[
+                  "Signed Commercial Invoice (3 originals)",
+                  "Full Set of Clean On-Board Bill of Lading",
+                  "Packing List (3 copies)",
+                  "Certificate of Origin (Country of Origin: China)",
+                  "Insurance Certificate (all risks, CIF + 10%)",
+                  "Pre-shipment Inspection Certificate",
+                  "Beneficiary's Certificate confirming shipment",
+                ].map((doc) => (
+                  <li key={doc} className="flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-success shrink-0 mt-0.5" />
+                    <span>{doc}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+            <Card className="p-6 lg:col-span-2">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Additional Conditions</h2>
+              <div className="bg-muted/40 rounded-md p-4 text-sm leading-relaxed space-y-2">
+                <p>• All documents must be presented within 21 days from the date of shipment but within the validity of the credit.</p>
+                <p>• Third party documents acceptable except invoice.</p>
+                <p>• Documents should clearly state the LC number and the name of the issuing bank.</p>
+                <p>• Discrepant documents may be forwarded on collection basis subject to applicant's consent.</p>
+                <p>• This LC is subject to ICC Uniform Customs and Practice for Documentary Credits (UCP 600) Publication No. 600 and ISBP 745.</p>
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 3: Amendment ── */}
+        <TabsContent value="amendment" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">Amendment History</h2>
+              <Badge variant="outline">{amendments.length} Amendment{amendments.length !== 1 ? "s" : ""}</Badge>
+            </div>
+            {amendments.length === 0 ? (
+              <div className="p-10 text-center text-sm text-muted-foreground">No amendments on this LC.</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {amendments.map((amd) => (
+                  <div key={amd.id} className="p-5 space-y-2">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-navy text-sm">AMD-{amd.amendmentNo}</span>
+                          {statusBadge(amd.status)}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          Date: {amd.date} · SWIFT: {amd.swiftRef}
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground">Requested by: {amd.requestedBy}</div>
+                    </div>
+                    <p className="text-sm text-foreground bg-muted/40 rounded-md p-3">{amd.description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card className="p-4 mt-4 bg-muted/30">
+            <div className="flex items-start gap-3">
+              <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+              <p className="text-xs text-muted-foreground">
+                LC amendments are transmitted via SWIFT MT707. Amendment requests must be initiated through the Trade Finance Desk and are subject to beneficiary acceptance.
+              </p>
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* ── TAB 4: Bills ── */}
+        <TabsContent value="bills" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">Linked Import Bills</h2>
+              <Badge variant="outline">{linkedBills.length} Bill{linkedBills.length !== 1 ? "s" : ""}</Badge>
+            </div>
+            {linkedBills.length === 0 ? (
+              <div className="p-10 text-center text-sm text-muted-foreground">
+                No import bills are linked to this LC yet.
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Bill Number</TableHead>
+                    <TableHead className="text-right">Bill Amount</TableHead>
+                    <TableHead>Discrepancy Status</TableHead>
+                    <TableHead>Acceptance Date</TableHead>
+                    <TableHead>Due Date</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {linkedBills.map((b) => (
+                    <TableRow key={b.id}>
+                      <TableCell className="font-mono text-sm font-semibold">{String(b.billNumber)}</TableCell>
+                      <TableCell className="text-right font-mono font-semibold">
+                        {String(b.currency)} {Number(b.billAmount).toLocaleString("en-US", { minimumFractionDigits: 0 })}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
+                            String(b.discrepancyStatus).includes("Clean")
+                              ? "text-success border-success text-[10px]"
+                              : "text-amber-600 border-amber-400 text-[10px]"
+                          }
+                        >
+                          {String(b.discrepancyStatus)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs">{String(b.acceptanceDate || "—")}</TableCell>
+                      <TableCell className="text-xs">{String(b.dueDate)}</TableCell>
+                      <TableCell>{statusBadge(String(b.status))}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link to="/app/$" params={{ _splat: `import-bill/view/${b.id}` }}>
+                            <Eye className="w-3.5 h-3.5" /> View
+                          </Link>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </Card>
+          {/* Utilization summary */}
+          {linkedBills.length > 0 && (
+            <Card className="p-5 mt-4">
+              <h3 className="font-semibold text-sm mb-3">LC Utilization Summary</h3>
+              <div className="grid grid-cols-3 gap-4 text-center text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground">LC Value</div>
+                  <div className="font-mono font-bold text-navy">
+                    {record.currency} {Number(record.lcAmount).toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Bills Presented</div>
+                  <div className="font-mono font-bold text-foreground">
+                    {record.currency}{" "}
+                    {linkedBills.reduce((a, b) => a + Number(b.billAmount || 0), 0).toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Remaining</div>
+                  <div className="font-mono font-bold text-success">
+                    {record.currency}{" "}
+                    {(Number(record.lcAmount) - linkedBills.reduce((a, b) => a + Number(b.billAmount || 0), 0)).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ── TAB 5: Guarantee ── */}
+        <TabsContent value="guarantee" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6 space-y-1">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Bank Guarantee / Security Details</h2>
+              {fieldRow("Security Type", "Lien on Import LC proceeds")}
+              {fieldRow("Cash Margin", "10% of LC Amount")}
+              {fieldRow("Cash Margin Amount", `${record.currency} ${(Number(record.lcAmount) * 0.1).toLocaleString("en-US", { minimumFractionDigits: 2 })}`, true)}
+              {fieldRow("Margin Account", "0123100001 — Al-Wadeeah Current")}
+              {fieldRow("Collateral Type", "Stock hypothecation & personal guarantee")}
+              {fieldRow("Guarantee Reference", `BG-${String(record.lcNumber).replace("LC-", "")}`)  }
+              {fieldRow("Guarantee Issue Date", String(record.openingDate))}
+              {fieldRow("Guarantee Expiry", String(record.expiryDate))}
+            </Card>
+            <Card className="p-6">
+              <h2 className="font-display text-lg font-bold text-navy mb-4">Margin & Charge Summary</h2>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">LC Commission (0.5%)</span>
+                  <span className="font-mono font-bold">{record.currency} {(Number(record.lcAmount) * 0.005).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">Cash Margin (10%)</span>
+                  <span className="font-mono font-bold">{record.currency} {(Number(record.lcAmount) * 0.1).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">SWIFT Charges (MT700)</span>
+                  <span className="font-mono font-bold">BDT 3,500.00</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">Courier / Handling</span>
+                  <span className="font-mono font-bold">BDT 1,200.00</span>
+                </div>
+                <div className="flex justify-between pt-1 font-bold">
+                  <span>Total Charges Debited</span>
+                  <span className="font-mono text-navy">{record.currency} {(Number(record.lcAmount) * 0.105).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+            </Card>
+            <Card className="p-5 lg:col-span-2 bg-muted/30">
+              <div className="flex items-start gap-3">
+                <Sparkles className="w-4 h-4 text-gold shrink-0 mt-0.5" />
+                <div className="text-xs text-muted-foreground">
+                  <strong>Shariah Compliance Note:</strong> The cash margin collected operates under an Al-Wadeeah (safe-custody) arrangement. No interest is charged on the margin. 
+                  LC commission represents the bank's actual service charge (Ujr) for facilitating trade, which is permissible under Islamic finance principles.
+                </div>
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ── TAB 6: SWIFT Messages ── */}
+        <TabsContent value="swift" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">SWIFT Message Log</h2>
+              <Badge variant="outline">{swiftMessages.length} Message{swiftMessages.length !== 1 ? "s" : ""}</Badge>
+            </div>
+            <div className="divide-y divide-border">
+              {swiftMessages.map((msg) => (
+                <div key={msg.id} className="p-5 space-y-2">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge className={`text-[10px] font-bold px-2 py-0.5 ${
+                        msg.msgType === "MT700" ? "bg-blue-100 text-blue-700 border border-blue-300" :
+                        msg.msgType === "MT707" ? "bg-purple-100 text-purple-700 border border-purple-300" :
+                        msg.msgType === "MT710" ? "bg-amber-100 text-amber-700 border border-amber-300" :
+                        "bg-green-100 text-green-700 border border-green-300"
+                      }`}>
+                        {msg.msgType}
+                      </Badge>
+                      <span className="font-semibold text-sm">{msg.subject}</span>
+                      <Badge variant="outline" className={`text-[10px] ${msg.status === "Sent" ? "text-success border-success" : "text-blue-600 border-blue-400"}`}>
+                        {msg.status}
+                      </Badge>
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono">{msg.date}</div>
+                  </div>
+                  <div className="text-xs space-y-1 text-muted-foreground">
+                    <div><span className="font-semibold text-foreground">From:</span> {msg.from}</div>
+                    <div><span className="font-semibold text-foreground">To:</span> {msg.to}</div>
+                  </div>
+                  <div className="bg-muted/40 rounded-md p-3 font-mono text-xs text-muted-foreground">
+                    {msg.body}
+                  </div>
+                  <div className="flex justify-end">
+                    <Button variant="ghost" size="sm" className="text-xs gap-1.5" onClick={() => toast.success(`SWIFT ${msg.msgType} message downloaded.`)}>
+                      <Download className="w-3 h-3" /> Download {msg.msgType}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </TabsContent>
+
+        {/* ── TAB 7: Advice ── */}
+        <TabsContent value="advice" className="mt-4">
+          <Card>
+            <div className="p-4 border-b border-border flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-navy">Advice Messages</h2>
+              <Badge variant="outline">{adviceMessages.length} Advice</Badge>
+            </div>
+            {adviceMessages.length === 0 ? (
+              <div className="p-10 text-center text-sm text-muted-foreground">No advice messages on this LC.</div>
+            ) : (
+              <div className="divide-y divide-border">
+                {adviceMessages.map((adv) => (
+                  <div key={adv.id} className="p-5 space-y-2">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-[10px]">{adv.type}</Badge>
+                          <Badge variant="outline" className="text-[10px] text-success border-success">{adv.status}</Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">{adv.date}</div>
+                      </div>
+                    </div>
+                    <div className="text-xs space-y-1 text-muted-foreground">
+                      <div><span className="font-semibold text-foreground">From:</span> {adv.from}</div>
+                      <div><span className="font-semibold text-foreground">To:</span> {adv.to}</div>
+                    </div>
+                    <p className="text-sm bg-muted/40 rounded-md p-3">{adv.summary}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+
+        {/* ── TAB 8: Banks ── */}
+        <TabsContent value="banks" className="mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {/* Issuing Bank */}
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 rounded-md navy-gradient grid place-items-center shrink-0">
+                  <Building2 className="w-4 h-4 text-gold" />
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase text-gold font-bold">Issuing Bank</div>
+                  <h3 className="font-bold text-sm">Shahjalal Islami Bank PLC</h3>
+                </div>
+              </div>
+              <div className="space-y-1 text-xs">
+                {fieldRow("SWIFT BIC", "SJIBBDDHXXX", true)}
+                {fieldRow("Branch", "Dilkusha Corporate Branch")}
+                {fieldRow("Address", "10, Dilkusha C/A, Dhaka-1000")}
+                {fieldRow("Country", "Bangladesh")}
+                {fieldRow("Contact", "+880-2-9560082")}
+                {fieldRow("Trade Desk Email", "trade@sjiblbd.com")}
+              </div>
+            </Card>
+
+            {/* Advising Bank */}
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 rounded-md bg-blue-100 grid place-items-center shrink-0">
+                  <Building2 className="w-4 h-4 text-blue-700" />
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase text-blue-600 font-bold">Advising Bank</div>
+                  <h3 className="font-bold text-sm">
+                    {String(record.lcNumber).includes("0994")
+                      ? "Commerzbank AG, Frankfurt"
+                      : "Bank of China, Shanghai Branch"}
+                  </h3>
+                </div>
+              </div>
+              <div className="space-y-1 text-xs">
+                {fieldRow("SWIFT BIC", String(record.lcNumber).includes("0994") ? "COBADEFFXXX" : "BKCHCNBJXXX", true)}
+                {fieldRow("Branch", String(record.lcNumber).includes("0994") ? "Frankfurt Main" : "Pudong Branch, Shanghai")}
+                {fieldRow("Address", String(record.lcNumber).includes("0994") ? "Kaiserplatz, 60311 Frankfurt" : "2 East Chang'an Ave, Dongcheng, Beijing")}
+                {fieldRow("Country", String(record.lcNumber).includes("0994") ? "Germany" : "China")}
+                {fieldRow("Advising Ref", `ADV-${String(record.swiftReference || "").replace("SWF-", "")}`)}
+              </div>
+            </Card>
+
+            {/* Confirming / Negotiating Bank */}
+            <Card className="p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 rounded-md bg-emerald-100 grid place-items-center shrink-0">
+                  <Building2 className="w-4 h-4 text-emerald-700" />
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase text-emerald-600 font-bold">Confirming / Negotiating Bank</div>
+                  <h3 className="font-bold text-sm">Not Confirmed</h3>
+                </div>
+              </div>
+              <div className="space-y-1 text-xs">
+                {fieldRow("Confirmation Status", "Unconfirmed LC")}
+                {fieldRow("Negotiating Bank", "At Advising Bank's Discretion")}
+                {fieldRow("Reimbursing Bank", "SJIBBDDHXXX (Self)")}
+                {fieldRow("Reimbursement Terms", "Via SJIBL Nostro (CHIPS/SWIFT)")}
+              </div>
+              <div className="mt-4 p-3 bg-muted/40 rounded-md text-[11px] text-muted-foreground">
+                This LC is unconfirmed. The advising bank has not added its confirmation. Beneficiary bears issuing bank risk.
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
