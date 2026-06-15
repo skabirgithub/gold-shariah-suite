@@ -12,6 +12,9 @@ import { PaymentInstructionDashboard } from "@/components/module/PaymentInstruct
 import { CreditCardDashboard } from "@/components/module/CreditCardDashboard";
 import { ServiceRequestDashboard } from "@/components/module/ServiceRequestDashboard";
 import { CorporateAdminDashboard } from "@/components/module/CorporateAdminDashboard";
+import { InquiryDashboard } from "@/components/module/InquiryDashboard";
+import { ServicesDashboard } from "@/components/module/ServicesDashboard";
+import { ProfileDashboard } from "@/components/module/ProfileDashboard";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -228,6 +231,24 @@ function ModuleRouter() {
   if (slug === "corporate-admin") {
     if (!action) {
       return <CorporateAdminDashboard />;
+    }
+  }
+
+  if (slug === "inquiry") {
+    if (!action) {
+      return <InquiryDashboard />;
+    }
+  }
+
+  if (slug === "services") {
+    if (!action) {
+      return <ServicesDashboard />;
+    }
+  }
+
+  if (slug === "profile") {
+    if (!action) {
+      return <ProfileDashboard />;
     }
   }
 
