@@ -7,6 +7,8 @@ import { ModuleForm } from "@/components/module/ModuleForm";
 import { ModuleDetail } from "@/components/module/ModuleDetail";
 import { BulkTransferDashboard } from "@/components/module/BulkTransferDashboard";
 import { CashManagementDashboard } from "@/components/module/CashManagementDashboard";
+import { InvoiceDashboard } from "@/components/module/InvoiceDashboard";
+import { PaymentInstructionDashboard } from "@/components/module/PaymentInstructionDashboard";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -193,6 +195,18 @@ function ModuleRouter() {
   if (slug === "cash-management") {
     if (!action) {
       return <CashManagementDashboard />;
+    }
+  }
+
+  if (slug === "invoice") {
+    if (!action) {
+      return <InvoiceDashboard />;
+    }
+  }
+
+  if (slug === "payment-instruction") {
+    if (!action) {
+      return <PaymentInstructionDashboard />;
     }
   }
 
