@@ -6,6 +6,7 @@ import { list, get, update, remove } from "@/lib/moduleStore";
 import { ModuleForm } from "@/components/module/ModuleForm";
 import { ModuleDetail } from "@/components/module/ModuleDetail";
 import { BulkTransferDashboard } from "@/components/module/BulkTransferDashboard";
+import { CashManagementDashboard } from "@/components/module/CashManagementDashboard";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -186,6 +187,12 @@ function ModuleRouter() {
   if (slug === "bulk-transfer") {
     if (!action) {
       return <BulkTransferDashboard />;
+    }
+  }
+
+  if (slug === "cash-management") {
+    if (!action) {
+      return <CashManagementDashboard />;
     }
   }
 
