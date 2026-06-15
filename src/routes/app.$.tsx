@@ -5,6 +5,7 @@ import { getSchema } from "@/lib/moduleSchema";
 import { list, get, update, remove } from "@/lib/moduleStore";
 import { ModuleForm } from "@/components/module/ModuleForm";
 import { ModuleDetail } from "@/components/module/ModuleDetail";
+import { BulkTransferDashboard } from "@/components/module/BulkTransferDashboard";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -179,6 +180,12 @@ function ModuleRouter() {
     }
     if (!action) {
       return <ExportBillDashboardView />;
+    }
+  }
+
+  if (slug === "bulk-transfer") {
+    if (!action) {
+      return <BulkTransferDashboard />;
     }
   }
 
