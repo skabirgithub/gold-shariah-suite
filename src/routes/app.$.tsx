@@ -9,6 +9,9 @@ import { BulkTransferDashboard } from "@/components/module/BulkTransferDashboard
 import { CashManagementDashboard } from "@/components/module/CashManagementDashboard";
 import { InvoiceDashboard } from "@/components/module/InvoiceDashboard";
 import { PaymentInstructionDashboard } from "@/components/module/PaymentInstructionDashboard";
+import { CreditCardDashboard } from "@/components/module/CreditCardDashboard";
+import { ServiceRequestDashboard } from "@/components/module/ServiceRequestDashboard";
+import { CorporateAdminDashboard } from "@/components/module/CorporateAdminDashboard";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -207,6 +210,24 @@ function ModuleRouter() {
   if (slug === "payment-instruction") {
     if (!action) {
       return <PaymentInstructionDashboard />;
+    }
+  }
+
+  if (slug === "credit-card") {
+    if (!action) {
+      return <CreditCardDashboard />;
+    }
+  }
+
+  if (slug === "service-request") {
+    if (!action) {
+      return <ServiceRequestDashboard />;
+    }
+  }
+
+  if (slug === "corporate-admin") {
+    if (!action) {
+      return <CorporateAdminDashboard />;
     }
   }
 
